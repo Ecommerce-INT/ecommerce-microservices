@@ -158,8 +158,10 @@ services:
       - ecommerce-network
 
   auth-service:
-    image: ghcr.io/hoangtien2k3/auth-service:latest
-    pull_policy: always
+    build:
+      context: .
+      dockerfile: ./auth-service/Dockerfile
+    image: ecommerce/auth-service:latest
     container_name: auth-service
     ports:
       - "8088:8088"
@@ -182,8 +184,10 @@ services:
       - ecommerce-network
 
   product-service:
-    image: ghcr.io/hoangtien2k3/product-service:latest
-    pull_policy: always
+    build:
+      context: .
+      dockerfile: ./product-service/Dockerfile
+    image: ecommerce/product-service:latest
     container_name: product-service
     ports:
       - "8086:8086"
@@ -199,8 +203,10 @@ services:
       - ecommerce-network
 
   order-service:
-    image: ghcr.io/hoangtien2k3/order-service:latest
-    pull_policy: always
+    build:
+      context: .
+      dockerfile: ./order-service/Dockerfile
+    image: ecommerce/order-service:latest
     container_name: order-service
     ports:
       - "8084:8084"
@@ -219,8 +225,10 @@ services:
       - ecommerce-network
 
   payment-service:
-    image: ghcr.io/hoangtien2k3/payment-service:latest
-    pull_policy: always
+    build:
+      context: .
+      dockerfile: ./payment-service/Dockerfile
+    image: ecommerce/payment-service:latest
     container_name: payment-service
     ports:
       - "8085:8085"
@@ -239,8 +247,10 @@ services:
       - ecommerce-network
 
   shipping-service:
-    image: ghcr.io/hoangtien2k3/shipping-service:latest
-    pull_policy: always
+    build:
+      context: .
+      dockerfile: ./shipping-service/Dockerfile
+    image: ecommerce/shipping-service:latest
     container_name: shipping-service
     ports:
       - "8087:8087"
@@ -256,8 +266,10 @@ services:
       - ecommerce-network
 
   inventory-service:
-    image: ghcr.io/hoangtien2k3/inventory-service:latest
-    pull_policy: always
+    build:
+      context: .
+      dockerfile: ./inventory-service/Dockerfile
+    image: ecommerce/inventory-service:latest
     container_name: inventory-service
     ports:
       - "8082:8082"
@@ -273,8 +285,10 @@ services:
       - ecommerce-network
 
   favourite-service:
-    image: ghcr.io/hoangtien2k3/favourite-service:latest
-    pull_policy: always
+    build:
+      context: ./favourite-service
+      dockerfile: Dockerfile
+    image: ecommerce/favourite-service:latest
     container_name: favourite-service
     ports:
       - "8081:8081"
@@ -290,8 +304,10 @@ services:
       - ecommerce-network
 
   rating-service:
-    image: ghcr.io/hoangtien2k3/rating-service:latest
-    pull_policy: always
+    build:
+      context: ./rating-service
+      dockerfile: Dockerfile
+    image: ecommerce/rating-service:latest
     container_name: rating-service
     ports:
       - "8089:8089"
@@ -307,8 +323,10 @@ services:
       - ecommerce-network
 
   media-service:
-    image: ghcr.io/hoangtien2k3/media-service:latest
-    pull_policy: always
+    build:
+      context: ./media-service
+      dockerfile: Dockerfile
+    image: ecommerce/media-service:latest
     container_name: media-service
     ports:
       - "8083:8083"
@@ -330,8 +348,10 @@ services:
       - ecommerce-network
 
   tax-service:
-    image: ghcr.io/hoangtien2k3/tax-service:latest
-    pull_policy: always
+    build:
+      context: .
+      dockerfile: ./tax-service/Dockerfile
+    image: ecommerce/tax-service:latest
     container_name: tax-service
     ports:
       - "8091:8091"
@@ -347,8 +367,10 @@ services:
       - ecommerce-network
 
   promotion-service:
-    image: ghcr.io/hoangtien2k3/promotion-service:latest
-    pull_policy: always
+    build:
+      context: ./promotion-service
+      dockerfile: Dockerfile
+    image: ecommerce/promotion-service:latest
     container_name: promotion-service
     ports:
       - "8093:8093"
@@ -364,8 +386,10 @@ services:
       - ecommerce-network
 
   search-service:
-    image: ghcr.io/hoangtien2k3/search-service:latest
-    pull_policy: always
+    build:
+      context: .
+      dockerfile: ./search-service/Dockerfile
+    image: ecommerce/search-service:latest
     container_name: search-service
     ports:
       - "8094:8094"
@@ -384,8 +408,10 @@ services:
       - ecommerce-network
 
   notification-service:
-    image: ghcr.io/hoangtien2k3/notification-service:latest
-    pull_policy: always
+    build:
+      context: ./notification-service
+      dockerfile: Dockerfile
+    image: ecommerce/notification-service:latest
     container_name: notification-service
     ports:
       - "8090:8090"
