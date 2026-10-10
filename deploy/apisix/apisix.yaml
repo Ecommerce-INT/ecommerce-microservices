@@ -23,10 +23,6 @@ upstreams:
   type: roundrobin
   nodes:
     shipping-service:8087: 1
-- id: 7
-  type: roundrobin
-  nodes:
-    favourite-service:8081: 1
 - id: 8
   type: roundrobin
   nodes:
@@ -47,10 +43,6 @@ upstreams:
   type: roundrobin
   nodes:
     promotion-service:8093: 1
-- id: 13
-  type: roundrobin
-  nodes:
-    tax-service:8091: 1
 global_rules:
 - id: 1
   plugins:

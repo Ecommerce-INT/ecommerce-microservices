@@ -71,3 +71,10 @@ files
 ### Flatten-maven-plugin ###
 **/.flattened-pom.xml
 .flattened-pom.xml
+
+### Node / Bun ###
+node_modules/
+bun.lockb
+
+### Go ###
+*.exe

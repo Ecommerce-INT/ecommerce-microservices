@@ -161,8 +161,8 @@ spec:
       match:
         paths: [ /api/favourites, /api/favourites/* ]
       backends:
-        - serviceName: favourite-service
-          servicePort: 8081
+        - serviceName: product-service
+          servicePort: 8086
       plugin_config_name: jwt-auth
       plugins:
         - name: proxy-rewrite
@@ -173,8 +173,8 @@ spec:
       match:
         paths: [ /favourite/v3/api-docs/* ]
       backends:
-        - serviceName: favourite-service
-          servicePort: 8081
+        - serviceName: product-service
+          servicePort: 8086
 ---
 apiVersion: apisix.apache.org/v2
 kind: ApisixRoute
@@ -321,19 +321,19 @@ spec:
       match:
         paths: [ /tax/backoffice/tax-classes/* ]
       backends:
-        - serviceName: tax-service
-          servicePort: 8091
+        - serviceName: promotion-service
+          servicePort: 8093
       plugin_config_name: jwt-auth
     - name: tax-rates
       match:
         paths: [ /tax/backoffice/tax-rates/* ]
       backends:
-        - serviceName: tax-service
-          servicePort: 8091
+        - serviceName: promotion-service
+          servicePort: 8093
       plugin_config_name: jwt-auth
     - name: docs
       match:
         paths: [ /tax/v3/api-docs/* ]
       backends:
-        - serviceName: tax-service
-          servicePort: 8091
+        - serviceName: promotion-service
+          servicePort: 8093
