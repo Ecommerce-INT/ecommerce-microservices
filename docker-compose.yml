@@ -284,25 +284,6 @@ services:
     networks:
       - ecommerce-network
 
-  favourite-service:
-    build:
-      context: ./favourite-service
-      dockerfile: Dockerfile
-    image: ecommerce/favourite-service:latest
-    container_name: favourite-service
-    ports:
-      - "8081:8081"
-    environment:
-      JWT_ISSUER_URI: http://keycloak:8080/realms/ecommerce
-      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/favouriteservice
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-    depends_on:
-      postgres:
-        condition: service_healthy
-    networks:
-      - ecommerce-network
-
   rating-service:
     build:
       context: ./rating-service
@@ -343,25 +324,6 @@ services:
       postgres:
         condition: service_healthy
       rustfs:
-        condition: service_healthy
-    networks:
-      - ecommerce-network
-
-  tax-service:
-    build:
-      context: .
-      dockerfile: ./tax-service/Dockerfile
-    image: ecommerce/tax-service:latest
-    container_name: tax-service
-    ports:
-      - "8091:8091"
-    environment:
-      JWT_ISSUER_URI: http://keycloak:8080/realms/ecommerce
-      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/taxservice
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-    depends_on:
-      postgres:
         condition: service_healthy
     networks:
       - ecommerce-network

@@ -70,6 +70,10 @@ func main() {
 	repo := repository.NewProductRepository(pool)
 	repo.InitSchema(ctx)
 
+	favRepo := repository.NewFavouriteRepository(pool)
+	favSvc := service.NewFavouriteService(favRepo)
+	favHandler := handler.NewFavouriteHandler(favSvc)
+
 	svc := service.NewProductService(repo)
 	h := handler.NewProductHandler(svc)
 
@@ -91,6 +95,7 @@ func main() {
 	app.Use(middleware.UserClaims())
 
 	h.RegisterRoutes(app)
+	favHandler.RegisterRoutes(app)
 
 	go func() {
 		if err := app.Listen(":" + port); err != nil {

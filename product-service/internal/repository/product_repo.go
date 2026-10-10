@@ -43,6 +43,15 @@ func (r *ProductRepository) InitSchema(ctx context.Context) {
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		);
+
+		CREATE TABLE IF NOT EXISTS favourites (
+			user_id INT NOT NULL,
+			product_id INT NOT NULL,
+			like_date TIMESTAMP NOT NULL,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (user_id, product_id, like_date)
+		);
 	`
 	if _, err := r.db.Exec(ctx, query); err != nil {
 		log.Printf("[Product Service] Notice during schema verification: %v", err)

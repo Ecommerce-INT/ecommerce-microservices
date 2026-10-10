@@ -17,4 +17,13 @@ describe("Promotion Service API", () => {
     const body = await res.json();
     expect(body.status).toBe("UP");
   });
+
+  it("should respond to /tax/actuator/health", async () => {
+    const req = new Request("http://localhost:8093/tax/actuator/health");
+    const res = await appObj.fetch(req);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.status).toBe("UP");
+  });
 });
+

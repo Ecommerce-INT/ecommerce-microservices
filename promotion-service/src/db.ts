@@ -64,8 +64,22 @@ export async function initDb() {
         last_modified_by VARCHAR(255),
         last_modified_on TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
       );
+
+      CREATE TABLE IF NOT EXISTS tax_class (
+        id BIGSERIAL PRIMARY KEY,
+        name VARCHAR(255) NOT NULL UNIQUE
+      );
+
+      CREATE TABLE IF NOT EXISTS tax_rate (
+        id BIGSERIAL PRIMARY KEY,
+        rate NUMERIC(10,4) NOT NULL,
+        country_id BIGINT NOT NULL,
+        state_or_province_id BIGINT,
+        zip_code VARCHAR(50),
+        tax_class_id BIGINT REFERENCES tax_class(id)
+      );
     `;
-    console.log("[Promotion Service] Database table 'promotion' ready.");
+    console.log("[Promotion Service] Database tables 'promotion', 'tax_class', 'tax_rate' ready.");
   } catch (err) {
     console.warn("[Promotion Service] Notice during database init:", err);
   }

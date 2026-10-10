@@ -9,5 +9,4 @@ use (
 	./product-service
 	./search-service
 	./shipping-service
-	./tax-service
 )
