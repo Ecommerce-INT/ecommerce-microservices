@@ -1,6 +1,6 @@
 module com.ecommerce/auth-service
 
-go 1.23
+go 1.27.0
 
 require (
 	com.ecommerce/pkg/common v0.0.0
