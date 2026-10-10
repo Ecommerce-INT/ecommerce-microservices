@@ -1,2 +1,9 @@
 # Declare files that will always have LF line endings on checkout.
 *.sh text eol=lf
+
+# Go sources must stay LF: gofmt treats CRLF files as unformatted, so a CRLF
+# checkout would make `gofmt -l` (and `make check`) fail on every file.
+*.go text eol=lf
+
+# Makefiles must stay LF too: CRLF breaks `\` line continuations in POSIX shells.
+Makefile text eol=lf

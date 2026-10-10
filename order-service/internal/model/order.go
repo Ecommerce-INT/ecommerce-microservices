@@ -1,17 +1,17 @@
 package model
 
 type UserDto struct {
-	ID       *int64  `json:"id,omitempty"`
-	FullName string  `json:"fullname,omitempty"`
-	Username string  `json:"username,omitempty"`
-	Email    string  `json:"email,omitempty"`
+	ID       *int64 `json:"id,omitempty"`
+	FullName string `json:"fullname,omitempty"`
+	Username string `json:"username,omitempty"`
+	Email    string `json:"email,omitempty"`
 }
 
 type ProductDto struct {
-	ProductId   *int     `json:"productId,omitempty"`
-	ProductTitle string  `json:"productTitle,omitempty"`
-	ImageUrl     string  `json:"imageUrl,omitempty"`
-	Sku          string  `json:"sku,omitempty"`
+	ProductId    *int     `json:"productId,omitempty"`
+	ProductTitle string   `json:"productTitle,omitempty"`
+	ImageUrl     string   `json:"imageUrl,omitempty"`
+	Sku          string   `json:"sku,omitempty"`
 	PriceUnit    *float64 `json:"priceUnit,omitempty"`
 	Quantity     *int     `json:"quantity,omitempty"`
 }
@@ -27,10 +27,10 @@ type OrderDto struct {
 }
 
 type CartDto struct {
-	CartId *int        `json:"cartId,omitempty"`
-	UserId *int64      `json:"userId,omitempty"`
-	Orders []OrderDto  `json:"order,omitempty"`
-	User   *UserDto    `json:"user,omitempty"`
+	CartId *int       `json:"cartId,omitempty"`
+	UserId *int64     `json:"userId,omitempty"`
+	Orders []OrderDto `json:"order,omitempty"`
+	User   *UserDto   `json:"user,omitempty"`
 }
 
 type PageResponse[T any] struct {
