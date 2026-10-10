@@ -1,0 +1,8 @@
+@import 'tailwindcss';
+@import '@ecommerce/ui/theme.css';
+@source '../../../../packages/ui/src';
+
+/* Backoffice-specific override of the shared theme. */
+:root {
+	--background: #f9fafb;
+}
