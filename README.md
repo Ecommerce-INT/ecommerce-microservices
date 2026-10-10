@@ -27,7 +27,7 @@
 **ecommerce-microservices** is a production-grade, ultra-lightweight e-commerce platform built as **11 cloud-native microservices** plus **2 Next.js frontends**:
 
 - **7 Go services** (`Go 1.27`) in a single `go.work` workspace — [`go-chi/chi/v5`](https://github.com/go-chi/chi) for HTTP routing, [`stephenafamo/bob`](https://github.com/stephenafamo/bob) v0.50 as the PostgreSQL query builder on top of [`jackc/pgx/v5`](https://github.com/jackc/pgx) v5.11.
-- **4 Bun / TypeScript services** — Hono + postgres.js + zod (KafkaJS, Nodemailer and the AWS S3 SDK where needed).
+- **4 Bun / TypeScript services** — Hono + zod over **Drizzle v1** (`drizzle-orm/bun-sql`, RC) on Bun's native PostgreSQL (`Bun.sql`) and S3 (`Bun.S3Client`) clients (KafkaJS + Nodemailer where needed).
 - **2 Next.js 16 apps** (storefront + backoffice) in a pnpm + Turborepo monorepo.
 - **Infrastructure** — PostgreSQL 16, Redis 7.4, Apache Kafka 3.9 (KRaft), Elasticsearch 8.15, RustFS (S3-compatible), Keycloak 26 (OIDC) and Apache APISIX as the edge gateway. Docker Compose runs everything locally; Kubernetes manifests (k3d) cover cluster runs.
 - **Design targets** — sub-50 ms cold starts and a fraction of the previous JVM footprint. The full target-state architecture (NATS JetStream, Better-Auth, OpenSearch 3.9, PostgreSQL 18 on CNPG, Valkey, SvelteKit, Cilium + Gateway API, a dedicated GitOps repo) is documented in **[docs/architecture-revamp-plan.md](docs/architecture-revamp-plan.md)**.
@@ -77,7 +77,7 @@ Browser traffic reaches the gateway at `/api/*` and `/storefront/*`; APISIX rewr
 | :--- | :--- |
 | **Go HTTP** | `go-chi/chi/v5` router, `go-chi/cors`, standard `net/http` (`context.Context` end-to-end) |
 | **Go data access** | `stephenafamo/bob` v0.50 query builder (`dialect/psql`) over `jackc/pgx/v5` v5.11 (`pgxpool`) |
-| **Bun services** | Hono, postgres.js, zod · KafkaJS · Nodemailer · `@aws-sdk/client-s3` |
+| **Bun services** | Hono, zod · Drizzle v1 (`drizzle-orm/bun-sql`, RC) on native `Bun.sql` · `Bun.S3Client` · KafkaJS · Nodemailer |
 | **Messaging** | Apache Kafka 3.9 (KRaft mode) |
 | **Search** | Elasticsearch 8.15 |
 | **Cache** | Redis 7.4 |
@@ -99,10 +99,12 @@ Browser traffic reaches the gateway at `/api/*` and `/storefront/*`; APISIX rewr
 | **5** | **`inventory-service`** | Go 1.27 · chi/v5 · bob/pgx | `8082` | Batch stock queries, stock reservations, warehouse ledger. |
 | **6** | **`shipping-service`** | Go 1.27 · chi/v5 · bob/pgx | `8087` | Shipping fee quotes, carrier management, shipment lifecycle. |
 | **7** | **`search-service`** | Go 1.27 · chi/v5 · Elasticsearch 8 | `8094` | Full-text catalog search, auto-complete suggestions, Kafka consumer sync. |
-| **8** | **`promotion-service`** | Bun 1.x · Hono · postgres.js | `8093` | Coupons, discount rules, **Tax Classes & Tax Rates calculation** (merged from `tax-service`). |
-| **9** | **`rating-service`** | Bun 1.x · Hono · postgres.js | `8089` | Product reviews, verified purchases, star rating aggregates. |
-| **10** | **`media-service`** | Bun 1.x · Hono · AWS S3 SDK | `8083` | Multipart file upload, RustFS (S3) stream, presigned upload URLs. |
-| **11** | **`notification-service`** | Bun 1.x · Hono · KafkaJS | `8090` | Transactional email dispatches, Kafka notification consumer, in-app inbox. |
+| **8** | **`promotion-service`** | Bun 1.x · Hono · Drizzle (Bun.sql) | `8093` | Coupons, discount rules, **Tax Classes & Tax Rates calculation** (merged from `tax-service`). |
+| **9** | **`rating-service`** | Bun 1.x · Hono · Drizzle (Bun.sql) | `8089` | Product reviews, verified purchases, star rating aggregates. |
+| **10** | **`media-service`** | Bun 1.x · Hono · Drizzle (Bun.sql) + Bun.S3Client | `8083` | Multipart file upload, RustFS (S3) stream, presigned upload URLs. |
+| **11** | **`notification-service`** | Bun 1.x · Hono · Drizzle (Bun.sql) · KafkaJS | `8090` | Transactional email dispatches, Kafka notification consumer, in-app inbox. |
+
+**Bun service databases** — queries go through Drizzle v1 (`src/schema.ts` is the typed source of truth) on Bun's native `Bun.sql`. Tables are created at boot by `initDb()` in `src/db.ts` with idempotent `CREATE TABLE IF NOT EXISTS` statements, so a fresh database needs no migration step; when you add a column or table, update `src/schema.ts` and the matching DDL in `db.ts` together. Generated `drizzle/` output stays local (gitignored). Typecheck with `bun run typecheck`.
 
 **Frontend apps** (pnpm workspace under `frontend/`):
 
@@ -146,7 +148,7 @@ ecommerce-microservices/
 | Tool | Version | Needed for |
 | :--- | :--- | :--- |
 | [Go](https://go.dev/dl/) | 1.27+ | The 7 Go services + `pkg/common` |
-| [Bun](https://bun.sh/) | 1.1+ | The 4 TypeScript services |
+| [Bun](https://bun.sh/) | 1.4+ | The 4 TypeScript services (native `Bun.sql` + `Bun.S3Client` need ≥ 1.2) |
 | [Docker](https://docs.docker.com/get-docker/) + Compose v2 | recent | Full stack or infra containers (Postgres, Kafka, Keycloak, …) |
 | [Node.js](https://nodejs.org/) + pnpm 10 | Node 20+ | Next.js frontends (`corepack enable` provides pnpm) |
 | GNU make | 3.81+ | Task runner on Linux / macOS / WSL / Git Bash |
