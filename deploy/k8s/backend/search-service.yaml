@@ -1,0 +1,94 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: search-service
+  namespace: ecommerce
+  labels:
+    app: search-service
+spec:
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  replicas: 1
+  selector:
+    matchLabels:
+      app: search-service
+  template:
+    metadata:
+      labels:
+        app: search-service
+    spec:
+      initContainers:
+        - name: wait-for-elasticsearch
+          image: busybox
+          command: ["sh", "-c", "until nc -z elasticsearch 9200; do sleep 5; done"]
+          securityContext:
+            runAsUser: 65534
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+        - name: wait-for-kafka
+          image: busybox
+          command: ["sh", "-c", "until nc -z kafka 9092; do sleep 5; done"]
+          securityContext:
+            runAsUser: 65534
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: search-service
+          image: ghcr.io/ecommerce-int/search-service:latest
+          imagePullPolicy: Always
+          terminationMessagePolicy: FallbackToLogsOnError
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            privileged: false
+          ports:
+            - containerPort: 8094
+          envFrom:
+            - configMapRef:
+                name: ecommerce-config
+          env:
+            - name: ELASTICSEARCH_USERNAME
+              value: ""
+            - name: ELASTICSEARCH_PASSWORD
+              value: ""
+          startupProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8094
+            periodSeconds: 10
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8094
+            periodSeconds: 10
+            failureThreshold: 3
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "1000m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: search-service
+  namespace: ecommerce
+spec:
+  type: ClusterIP
+  selector:
+    app: search-service
+  ports:
+    - port: 8094
+      targetPort: 8094

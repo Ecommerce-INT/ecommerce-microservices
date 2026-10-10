@@ -6,13 +6,12 @@ on:
       service:
         required: true
         type: string
-      port:
+      context:
         required: true
         type: string
-      java-version:
-        required: false
+      dockerfile:
+        required: true
         type: string
-        default: "21"
     secrets:
       GHCR_TOKEN:
         required: true
@@ -34,27 +33,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up JDK ${{ inputs.java-version }}
-        uses: actions/setup-java@v4
-        with:
-          java-version: ${{ inputs.java-version }}
-          distribution: temurin
-          cache: maven
-
-      - name: Generate image metadata
+      - name: Resolve image name (GHCR requires lowercase)
         id: meta
         run: |
-          IMAGE="ghcr.io/${{ github.repository_owner }}/${{ inputs.service }}"
-          echo "image=${IMAGE}" >> $GITHUB_OUTPUT
+          IMAGE="$(echo "ghcr.io/${{ github.repository_owner }}/${{ inputs.service }}" | tr '[:upper:]' '[:lower:]')"
+          echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
 
-          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
-            TAGS="latest"
-          else
-            TAGS="${{ github.ref_name }}"
-          fi
-          echo "tags=${TAGS}" >> $GITHUB_OUTPUT
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
 
       - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -65,33 +54,23 @@ jobs:
         if: github.event_name != 'pull_request'
         run: sleep $(( RANDOM % 10 ))
 
-      - name: Build & push image with Jib
-        if: github.event_name != 'pull_request'
-        run: |
-          SUCCESS=false
-          for i in 1 2 3; do
-            mvn -pl ${{ inputs.service }} -am \
-              package jib:build \
-              -DskipTests -B \
-              -Djib.to.image=${{ steps.meta.outputs.image }} \
-              -Djib.to.tags=${{ steps.meta.outputs.tags }} \
-              -Djib.container.ports=${{ inputs.port }} \
-            && { SUCCESS=true; break; }
-            jitter=$(( RANDOM % 10 + 1 ))
-            delay=$(( i * 8 + jitter ))
-            echo "Push attempt $i failed. Retrying in ${delay}s..."
-            sleep $delay
-          done
-          $SUCCESS || { echo "All 3 push attempts failed"; exit 1; }
+      - name: Docker metadata
+        id: docker-meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.meta.outputs.image }}
+          tags: |
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=ref,event=branch
+            type=sha,format=short
 
-      - name: Build image tar only (PR — no push)
-        if: github.event_name == 'pull_request'
-        run: |
-          mvn -pl ${{ inputs.service }} -am \
-            package jib:buildTar \
-            -DskipTests -B \
-            -Djib.to.image=${{ steps.meta.outputs.image }}:pr-check \
-            -Djib.container.ports=${{ inputs.port }}
-
-      - name: Image digest
-        run: echo "Pushed ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tags }}"
+      - name: Build image (& push off PRs)
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ inputs.context }}
+          file: ${{ inputs.dockerfile }}
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.docker-meta.outputs.tags }}
+          labels: ${{ steps.docker-meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ inputs.service }}
+          cache-to: type=gha,mode=max,scope=${{ inputs.service }}

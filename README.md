@@ -36,17 +36,17 @@ A cloud-native e-commerce platform built around 11 backend microservices and 2 S
 
 | Service / App | Path | Stack | Role |
 | :--- | :--- | :--- | :--- |
-| **Auth** | `auth-service/` | Go | OIDC integration, SSO ticket exchange, user/role management |
-| **Product** | `product-service/` | Go | Catalog, categories, brands, user wishlists |
-| **Order** | `order-service/` | Go | Cart, order creation, checkout lifecycle |
-| **Payment** | `payment-service/` | Go | Transactions, payment status webhooks, Kafka publisher |
-| **Inventory** | `inventory-service/` | Go | Stock queries, reservations, warehouse ledger |
-| **Shipping** | `shipping-service/` | Go | Fee calculation, carrier management, shipment tracking |
-| **Search** | `search-service/` | Go | Elasticsearch full-text search, autocomplete, Kafka sync |
-| **Promotion** | `promotion-service/` | Bun / TS | Coupons, discount rules, tax rate calculation |
-| **Rating** | `rating-service/` | Bun / TS | Product reviews, verified purchase checks, star aggregates |
-| **Media** | `media-service/` | Bun / TS | S3 multipart uploads, streaming, presigned URLs |
-| **Notification** | `notification-service/` | Bun / TS | Transactional emails, in-app inbox, Kafka consumer |
+| **Auth** | `services/auth-service/` | Go | OIDC integration, SSO ticket exchange, user/role management |
+| **Product** | `services/product-service/` | Go | Catalog, categories, brands, user wishlists |
+| **Order** | `services/order-service/` | Go | Cart, order creation, checkout lifecycle |
+| **Payment** | `services/payment-service/` | Go | Transactions, payment status webhooks, Kafka publisher |
+| **Inventory** | `services/inventory-service/` | Go | Stock queries, reservations, warehouse ledger |
+| **Shipping** | `services/shipping-service/` | Go | Fee calculation, carrier management, shipment tracking |
+| **Search** | `services/search-service/` | Go | Elasticsearch full-text search, autocomplete, Kafka sync |
+| **Promotion** | `services/promotion-service/` | Bun / TS | Coupons, discount rules, tax rate calculation |
+| **Rating** | `services/rating-service/` | Bun / TS | Product reviews, verified purchase checks, star aggregates |
+| **Media** | `services/media-service/` | Bun / TS | S3 multipart uploads, streaming, presigned URLs |
+| **Notification** | `services/notification-service/` | Bun / TS | Transactional emails, in-app inbox, Kafka consumer |
 | **Storefront** | `frontend/apps/web/` | SvelteKit | Customer-facing web app (catalog, cart, checkout) |
 | **Backoffice** | `frontend/apps/admin/` | SvelteKit | Internal admin dashboard (inventory, order management) |
 
@@ -77,10 +77,10 @@ To spin up a local Kubernetes cluster using `k3d`, run:
 
 ```bash
 # Windows
-.\start-ecommerce.bat
+.\scripts\start-ecommerce.bat
 
 # Linux / macOS
-./start-ecommerce.sh
+./scripts/start-ecommerce.sh
 ```
 
 Update your `hosts` file to resolve the local domain:

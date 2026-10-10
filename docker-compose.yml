@@ -13,7 +13,7 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+      - ./deploy/postgres/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d ecommerce"]
       interval: 5s
@@ -122,7 +122,7 @@ services:
       KC_DB_USERNAME: ${POSTGRES_USER}
       KC_DB_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
-      - ./docker/keycloak/import:/opt/keycloak/data/import:ro
+      - ./deploy/keycloak/import:/opt/keycloak/data/import:ro
     ports:
       - "8080:8080"
     depends_on:
@@ -138,7 +138,7 @@ services:
       - ecommerce-network
 
   # ============================================================
-  # BACKEND — Spring Boot Microservices
+  # BACKEND — Go + Bun Microservices
   # ============================================================
   apisix:
     image: apache/apisix:3.15.0-debian
@@ -159,8 +159,8 @@ services:
 
   auth-service:
     build:
-      context: .
-      dockerfile: ./auth-service/Dockerfile
+      context: ./services
+      dockerfile: auth-service/Dockerfile
     image: ecommerce/auth-service:latest
     container_name: auth-service
     ports:
@@ -185,8 +185,8 @@ services:
 
   product-service:
     build:
-      context: .
-      dockerfile: ./product-service/Dockerfile
+      context: ./services
+      dockerfile: product-service/Dockerfile
     image: ecommerce/product-service:latest
     container_name: product-service
     ports:
@@ -204,8 +204,8 @@ services:
 
   order-service:
     build:
-      context: .
-      dockerfile: ./order-service/Dockerfile
+      context: ./services
+      dockerfile: order-service/Dockerfile
     image: ecommerce/order-service:latest
     container_name: order-service
     ports:
@@ -226,8 +226,8 @@ services:
 
   payment-service:
     build:
-      context: .
-      dockerfile: ./payment-service/Dockerfile
+      context: ./services
+      dockerfile: payment-service/Dockerfile
     image: ecommerce/payment-service:latest
     container_name: payment-service
     ports:
@@ -248,8 +248,8 @@ services:
 
   shipping-service:
     build:
-      context: .
-      dockerfile: ./shipping-service/Dockerfile
+      context: ./services
+      dockerfile: shipping-service/Dockerfile
     image: ecommerce/shipping-service:latest
     container_name: shipping-service
     ports:
@@ -267,8 +267,8 @@ services:
 
   inventory-service:
     build:
-      context: .
-      dockerfile: ./inventory-service/Dockerfile
+      context: ./services
+      dockerfile: inventory-service/Dockerfile
     image: ecommerce/inventory-service:latest
     container_name: inventory-service
     ports:
@@ -286,7 +286,7 @@ services:
 
   rating-service:
     build:
-      context: ./rating-service
+      context: ./services/rating-service
       dockerfile: Dockerfile
     image: ecommerce/rating-service:latest
     container_name: rating-service
@@ -305,7 +305,7 @@ services:
 
   media-service:
     build:
-      context: ./media-service
+      context: ./services/media-service
       dockerfile: Dockerfile
     image: ecommerce/media-service:latest
     container_name: media-service
@@ -330,7 +330,7 @@ services:
 
   promotion-service:
     build:
-      context: ./promotion-service
+      context: ./services/promotion-service
       dockerfile: Dockerfile
     image: ecommerce/promotion-service:latest
     container_name: promotion-service
@@ -349,8 +349,8 @@ services:
 
   search-service:
     build:
-      context: .
-      dockerfile: ./search-service/Dockerfile
+      context: ./services
+      dockerfile: search-service/Dockerfile
     image: ecommerce/search-service:latest
     container_name: search-service
     ports:
@@ -371,7 +371,7 @@ services:
 
   notification-service:
     build:
-      context: ./notification-service
+      context: ./services/notification-service
       dockerfile: Dockerfile
     image: ecommerce/notification-service:latest
     container_name: notification-service
@@ -399,7 +399,7 @@ services:
   # FRONTEND — SvelteKit 5 on Bun (SSR, httpOnly-cookie BFF auth)
   # ============================================================
   frontend:
-    image: ghcr.io/hoangtien2k3/frontend-web:latest
+    image: ghcr.io/ecommerce-int/frontend-web:latest
     pull_policy: always
     container_name: frontend
     ports:
@@ -420,7 +420,7 @@ services:
       - ecommerce-network
 
   admin:
-    image: ghcr.io/hoangtien2k3/frontend-admin:latest
+    image: ghcr.io/ecommerce-int/frontend-admin:latest
     pull_policy: always
     container_name: admin
     ports:
