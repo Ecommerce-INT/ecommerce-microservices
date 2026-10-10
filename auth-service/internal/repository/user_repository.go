@@ -2,25 +2,34 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"errors"
-	"fmt"
 	"strings"
 
 	"com.ecommerce/auth-service/internal/model"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/stephenafamo/bob"
+	"github.com/stephenafamo/bob/dialect/psql"
+	"github.com/stephenafamo/bob/dialect/psql/dialect"
+	"github.com/stephenafamo/bob/dialect/psql/dm"
+	"github.com/stephenafamo/bob/dialect/psql/fm"
+	"github.com/stephenafamo/bob/dialect/psql/im"
+	"github.com/stephenafamo/bob/dialect/psql/sm"
+	"github.com/stephenafamo/bob/dialect/psql/um"
+	pgxdriver "github.com/stephenafamo/bob/drivers/pgx"
+	"github.com/stephenafamo/scan"
 )
 
 type UserRepository struct {
-	pool *pgxpool.Pool
+	db pgxdriver.Pool
 }
 
 func NewUserRepository(pool *pgxpool.Pool) *UserRepository {
-	return &UserRepository{pool: pool}
+	return &UserRepository{db: pgxdriver.NewPool(pool)}
 }
 
 func (r *UserRepository) InitSchema(ctx context.Context) error {
-	if r.pool == nil {
+	if r.db.Pool == nil {
 		return nil
 	}
 	schema := `
@@ -52,64 +61,111 @@ func (r *UserRepository) InitSchema(ctx context.Context) error {
 	INSERT INTO roles (id, role_name) VALUES (2, 'PM') ON CONFLICT (id) DO NOTHING;
 	INSERT INTO roles (id, role_name) VALUES (3, 'ADMIN') ON CONFLICT (id) DO NOTHING;
 	`
-	_, err := r.pool.Exec(ctx, schema)
+	_, err := r.db.Exec(ctx, schema)
 	return err
 }
 
+type userRow struct {
+	ID             int64  `db:"user_id"`
+	FullName       string `db:"full_name"`
+	Username       string `db:"user_name"`
+	Email          string `db:"email"`
+	Gender         string `db:"gender"`
+	Phone          string `db:"phone_number"`
+	Avatar         string `db:"image_url"`
+	KeycloakUserID string `db:"keycloak_user_id"`
+}
+
+func (row userRow) toModel() *model.User {
+	return &model.User{
+		ID:             row.ID,
+		FullName:       row.FullName,
+		Username:       row.Username,
+		Email:          row.Email,
+		Gender:         row.Gender,
+		Phone:          row.Phone,
+		Avatar:         row.Avatar,
+		KeycloakUserID: row.KeycloakUserID,
+	}
+}
+
+func userColumns() []any {
+	return []any{
+		psql.Quote("user_id"),
+		psql.F("COALESCE", psql.Quote("full_name"), psql.S(""))(fm.As("full_name")),
+		psql.Quote("user_name"),
+		psql.Quote("email"),
+		psql.F("COALESCE", psql.Quote("gender"), psql.S(""))(fm.As("gender")),
+		psql.F("COALESCE", psql.Quote("phone_number"), psql.S(""))(fm.As("phone_number")),
+		psql.F("COALESCE", psql.Quote("image_url"), psql.S(""))(fm.As("image_url")),
+		psql.F("COALESCE", psql.Quote("keycloak_user_id"), psql.S(""))(fm.As("keycloak_user_id")),
+	}
+}
+
+func roleByNameQuery(roleName string) bob.BaseQuery[*dialect.SelectQuery] {
+	return psql.Select(
+		sm.Columns(psql.Quote("id")),
+		sm.From("roles"),
+		sm.Where(psql.Quote("role_name").EQ(psql.Arg(roleName))),
+	)
+}
+
+func orderByMod(col string, order string) dialect.OrderBy[*dialect.SelectQuery] {
+	mod := sm.OrderBy(psql.Quote(col))
+	if order == "DESC" {
+		return mod.Desc()
+	}
+	return mod.Asc()
+}
+
 func (r *UserRepository) FindByUsername(ctx context.Context, username string) (*model.User, error) {
-	if r.pool == nil {
+	if r.db.Pool == nil {
 		return nil, errors.New("db not connected")
 	}
-	query := `
-		SELECT user_id, COALESCE(full_name, ''), user_name, email, COALESCE(gender, ''), 
-		       COALESCE(phone_number, ''), COALESCE(image_url, ''), COALESCE(keycloak_user_id, '')
-		FROM users
-		WHERE user_name = $1
-	`
-	var u model.User
-	err := r.pool.QueryRow(ctx, query, username).Scan(
-		&u.ID, &u.FullName, &u.Username, &u.Email, &u.Gender, &u.Phone, &u.Avatar, &u.KeycloakUserID,
+	query := psql.Select(
+		sm.Columns(userColumns()...),
+		sm.From("users"),
+		sm.Where(psql.Quote("user_name").EQ(psql.Arg(username))),
 	)
+	row, err := bob.One(ctx, r.db, query, scan.StructMapper[userRow]())
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
 	}
 
-	roles, _ := r.GetUserRoles(ctx, u.ID)
-	u.Roles = roles
-	return &u, nil
+	user := row.toModel()
+	roles, _ := r.GetUserRoles(ctx, user.ID)
+	user.Roles = roles
+	return user, nil
 }
 
 func (r *UserRepository) FindById(ctx context.Context, id int64) (*model.User, error) {
-	if r.pool == nil {
+	if r.db.Pool == nil {
 		return nil, errors.New("db not connected")
 	}
-	query := `
-		SELECT user_id, COALESCE(full_name, ''), user_name, email, COALESCE(gender, ''), 
-		       COALESCE(phone_number, ''), COALESCE(image_url, ''), COALESCE(keycloak_user_id, '')
-		FROM users
-		WHERE user_id = $1
-	`
-	var u model.User
-	err := r.pool.QueryRow(ctx, query, id).Scan(
-		&u.ID, &u.FullName, &u.Username, &u.Email, &u.Gender, &u.Phone, &u.Avatar, &u.KeycloakUserID,
+	query := psql.Select(
+		sm.Columns(userColumns()...),
+		sm.From("users"),
+		sm.Where(psql.Quote("user_id").EQ(psql.Arg(id))),
 	)
+	row, err := bob.One(ctx, r.db, query, scan.StructMapper[userRow]())
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
 	}
 
-	roles, _ := r.GetUserRoles(ctx, u.ID)
-	u.Roles = roles
-	return &u, nil
+	user := row.toModel()
+	roles, _ := r.GetUserRoles(ctx, user.ID)
+	user.Roles = roles
+	return user, nil
 }
 
 func (r *UserRepository) FindAll(ctx context.Context, page, size int, sortBy, sortOrder string) ([]model.User, int64, error) {
-	if r.pool == nil {
+	if r.db.Pool == nil {
 		return nil, 0, errors.New("db not connected")
 	}
 
@@ -130,56 +186,59 @@ func (r *UserRepository) FindAll(ctx context.Context, page, size int, sortBy, so
 		order = "DESC"
 	}
 
-	var total int64
-	err := r.pool.QueryRow(ctx, "SELECT COUNT(*) FROM users").Scan(&total)
+	countQuery := psql.Select(
+		sm.Columns("COUNT(*)"),
+		sm.From("users"),
+	)
+	total, err := bob.One(ctx, r.db, countQuery, scan.SingleColumnMapper[int64])
 	if err != nil {
 		return nil, 0, err
 	}
 
-	offset := page * size
-	query := fmt.Sprintf(`
-		SELECT user_id, COALESCE(full_name, ''), user_name, email, COALESCE(gender, ''), 
-		       COALESCE(phone_number, ''), COALESCE(image_url, ''), COALESCE(keycloak_user_id, '')
-		FROM users
-		ORDER BY %s %s
-		LIMIT $1 OFFSET $2
-	`, col, order)
-
-	rows, err := r.pool.Query(ctx, query, size, offset)
+	query := psql.Select(
+		sm.Columns(userColumns()...),
+		sm.From("users"),
+		orderByMod(col, order),
+		sm.Limit(size),
+		sm.Offset(page*size),
+	)
+	rows, err := bob.All(ctx, r.db, query, scan.StructMapper[userRow]())
 	if err != nil {
 		return nil, 0, err
 	}
-	defer rows.Close()
 
-	var users []model.User
-	for rows.Next() {
-		var u model.User
-		if err := rows.Scan(&u.ID, &u.FullName, &u.Username, &u.Email, &u.Gender, &u.Phone, &u.Avatar, &u.KeycloakUserID); err != nil {
-			return nil, 0, err
-		}
-		users = append(users, u)
+	users := make([]model.User, 0, len(rows))
+	for _, row := range rows {
+		users = append(users, *row.toModel())
 	}
-
 	return users, total, nil
 }
 
 func (r *UserRepository) Create(ctx context.Context, u *model.User, roleNames []string) (*model.User, error) {
-	if r.pool == nil {
+	if r.db.Pool == nil {
 		return nil, errors.New("db not connected")
 	}
 
-	tx, err := r.pool.Begin(ctx)
+	tx, err := r.db.Begin(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
 
-	insertQuery := `
-		INSERT INTO users (full_name, user_name, email, gender, phone_number, image_url, keycloak_user_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-		RETURNING user_id
-	`
-	err = tx.QueryRow(ctx, insertQuery, u.FullName, u.Username, u.Email, u.Gender, u.Phone, u.Avatar, u.KeycloakUserID).Scan(&u.ID)
+	insertQuery := psql.Insert(
+		im.Into("users", "full_name", "user_name", "email", "gender", "phone_number", "image_url", "keycloak_user_id"),
+		im.Values(
+			psql.Arg(u.FullName),
+			psql.Arg(u.Username),
+			psql.Arg(u.Email),
+			psql.Arg(u.Gender),
+			psql.Arg(u.Phone),
+			psql.Arg(u.Avatar),
+			psql.Arg(u.KeycloakUserID),
+		),
+		im.Returning("user_id"),
+	)
+	u.ID, err = bob.One(ctx, tx, insertQuery, scan.SingleColumnMapper[int64])
 	if err != nil {
 		return nil, err
 	}
@@ -189,12 +248,16 @@ func (r *UserRepository) Create(ctx context.Context, u *model.User, roleNames []
 		if rnUpper == "" {
 			continue
 		}
-		_, err := tx.Exec(ctx, `
-			INSERT INTO user_role (user_id, role_id)
-			SELECT $1, id FROM roles WHERE role_name = $2
-			ON CONFLICT DO NOTHING
-		`, u.ID, rnUpper)
-		if err != nil {
+		roleQuery := psql.Insert(
+			im.Into("user_role", "user_id", "role_id"),
+			im.Query(psql.Select(
+				sm.Columns(psql.Arg(u.ID), psql.Quote("id")),
+				sm.From("roles"),
+				sm.Where(psql.Quote("role_name").EQ(psql.Arg(rnUpper))),
+			)),
+			im.OnConflict().DoNothing(),
+		)
+		if _, err := bob.Exec(ctx, tx, roleQuery); err != nil {
 			return nil, err
 		}
 	}
@@ -207,7 +270,7 @@ func (r *UserRepository) Create(ctx context.Context, u *model.User, roleNames []
 }
 
 func (r *UserRepository) Update(ctx context.Context, id int64, req model.UpdateUserRequest) (*model.User, error) {
-	if r.pool == nil {
+	if r.db.Pool == nil {
 		return nil, errors.New("db not connected")
 	}
 
@@ -235,13 +298,18 @@ func (r *UserRepository) Update(ctx context.Context, id int64, req model.UpdateU
 		existing.Avatar = *req.Avatar
 	}
 
-	query := `
-		UPDATE users
-		SET full_name = $1, email = $2, gender = $3, phone_number = $4, image_url = $5
-		WHERE user_id = $6
-	`
-	_, err = r.pool.Exec(ctx, query, existing.FullName, existing.Email, existing.Gender, existing.Phone, existing.Avatar, id)
-	if err != nil {
+	query := psql.Update(
+		um.Table("users"),
+		um.Set(
+			psql.Quote("full_name").EQ(psql.Arg(existing.FullName)),
+			psql.Quote("email").EQ(psql.Arg(existing.Email)),
+			psql.Quote("gender").EQ(psql.Arg(existing.Gender)),
+			psql.Quote("phone_number").EQ(psql.Arg(existing.Phone)),
+			psql.Quote("image_url").EQ(psql.Arg(existing.Avatar)),
+		),
+		um.Where(psql.Quote("user_id").EQ(psql.Arg(id))),
+	)
+	if _, err = bob.Exec(ctx, r.db, query); err != nil {
 		return nil, err
 	}
 
@@ -249,95 +317,117 @@ func (r *UserRepository) Update(ctx context.Context, id int64, req model.UpdateU
 }
 
 func (r *UserRepository) Delete(ctx context.Context, id int64) error {
-	if r.pool == nil {
+	if r.db.Pool == nil {
 		return errors.New("db not connected")
 	}
-	_, err := r.pool.Exec(ctx, "DELETE FROM users WHERE user_id = $1", id)
+	query := psql.Delete(
+		dm.From("users"),
+		dm.Where(psql.Quote("user_id").EQ(psql.Arg(id))),
+	)
+	_, err := bob.Exec(ctx, r.db, query)
 	return err
 }
 
 func (r *UserRepository) AssignRole(ctx context.Context, userId int64, roleName string) (bool, error) {
-	if r.pool == nil {
+	if r.db.Pool == nil {
 		return false, errors.New("db not connected")
 	}
 	rn := strings.ToUpper(strings.TrimSpace(roleName))
-	tag, err := r.pool.Exec(ctx, `
-		INSERT INTO user_role (user_id, role_id)
-		SELECT $1, id FROM roles WHERE role_name = $2
-		ON CONFLICT DO NOTHING
-	`, userId, rn)
+	query := psql.Insert(
+		im.Into("user_role", "user_id", "role_id"),
+		im.Query(psql.Select(
+			sm.Columns(psql.Arg(userId), psql.Quote("id")),
+			sm.From("roles"),
+			sm.Where(psql.Quote("role_name").EQ(psql.Arg(rn))),
+		)),
+		im.OnConflict().DoNothing(),
+	)
+	result, err := bob.Exec(ctx, r.db, query)
 	if err != nil {
 		return false, err
 	}
-	return tag.RowsAffected() > 0, nil
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return affected > 0, nil
 }
 
 func (r *UserRepository) RevokeRole(ctx context.Context, userId int64, roleName string) (bool, error) {
-	if r.pool == nil {
+	if r.db.Pool == nil {
 		return false, errors.New("db not connected")
 	}
 	rn := strings.ToUpper(strings.TrimSpace(roleName))
-	tag, err := r.pool.Exec(ctx, `
-		DELETE FROM user_role
-		WHERE user_id = $1 AND role_id IN (SELECT id FROM roles WHERE role_name = $2)
-	`, userId, rn)
+	query := psql.Delete(
+		dm.From("user_role"),
+		dm.Where(psql.And(
+			psql.Quote("user_id").EQ(psql.Arg(userId)),
+			psql.Quote("role_id").In(roleByNameQuery(rn)),
+		)),
+	)
+	result, err := bob.Exec(ctx, r.db, query)
 	if err != nil {
 		return false, err
 	}
-	return tag.RowsAffected() > 0, nil
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return affected > 0, nil
 }
 
 func (r *UserRepository) GetUserRoles(ctx context.Context, userId int64) ([]string, error) {
-	if r.pool == nil {
+	if r.db.Pool == nil {
 		return nil, errors.New("db not connected")
 	}
-	query := `
-		SELECT r.role_name
-		FROM roles r
-		INNER JOIN user_role ur ON ur.role_id = r.id
-		WHERE ur.user_id = $1
-		ORDER BY r.id
-	`
-	rows, err := r.pool.Query(ctx, query, userId)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var roles []string
-	for rows.Next() {
-		var role string
-		if err := rows.Scan(&role); err != nil {
-			return nil, err
-		}
-		roles = append(roles, role)
-	}
-	return roles, nil
+	query := psql.Select(
+		sm.Columns(psql.Quote("r", "role_name")),
+		sm.From("roles r"),
+		sm.InnerJoin("user_role ur").On(psql.Raw("ur.role_id = r.id")),
+		sm.Where(psql.Quote("ur", "user_id").EQ(psql.Arg(userId))),
+		sm.OrderBy(psql.Quote("r", "id")).Asc(),
+	)
+	return bob.All(ctx, r.db, query, scan.SingleColumnMapper[string])
 }
 
 func (r *UserRepository) ExistsByUsername(ctx context.Context, username string) (bool, error) {
-	if r.pool == nil {
+	if r.db.Pool == nil {
 		return false, nil
 	}
-	var exists bool
-	err := r.pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM users WHERE user_name = $1)", username).Scan(&exists)
-	return exists, err
+	query := psql.Select(
+		sm.Columns(psql.Exists(psql.Select(
+			sm.Columns("1"),
+			sm.From("users"),
+			sm.Where(psql.Quote("user_name").EQ(psql.Arg(username))),
+		))),
+	)
+	return bob.One(ctx, r.db, query, scan.SingleColumnMapper[bool])
 }
 
 func (r *UserRepository) ExistsByEmail(ctx context.Context, email string) (bool, error) {
-	if r.pool == nil {
+	if r.db.Pool == nil {
 		return false, nil
 	}
-	var exists bool
-	err := r.pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM users WHERE email = $1)", email).Scan(&exists)
-	return exists, err
+	query := psql.Select(
+		sm.Columns(psql.Exists(psql.Select(
+			sm.Columns("1"),
+			sm.From("users"),
+			sm.Where(psql.Quote("email").EQ(psql.Arg(email))),
+		))),
+	)
+	return bob.One(ctx, r.db, query, scan.SingleColumnMapper[bool])
 }
 
 func (r *UserRepository) ExistsByPhone(ctx context.Context, phone string) (bool, error) {
-	if r.pool == nil {
+	if r.db.Pool == nil {
 		return false, nil
 	}
-	var exists bool
-	err := r.pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM users WHERE phone_number = $1)", phone).Scan(&exists)
-	return exists, err
+	query := psql.Select(
+		sm.Columns(psql.Exists(psql.Select(
+			sm.Columns("1"),
+			sm.From("users"),
+			sm.Where(psql.Quote("phone_number").EQ(psql.Arg(phone))),
+		))),
+	)
+	return bob.One(ctx, r.db, query, scan.SingleColumnMapper[bool])
 }

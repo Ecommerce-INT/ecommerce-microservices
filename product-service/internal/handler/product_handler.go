@@ -1,13 +1,15 @@
 package handler
 
 import (
+	"encoding/json"
 	"errors"
+	"net/http"
 	"strconv"
 
 	"com.ecommerce/pkg/common/response"
 	"com.ecommerce/product-service/internal/model"
 	"com.ecommerce/product-service/internal/service"
-	"github.com/gofiber/fiber/v2"
+	"github.com/go-chi/chi/v5"
 )
 
 type ProductHandler struct {
@@ -18,199 +20,217 @@ func NewProductHandler(svc *service.ProductService) *ProductHandler {
 	return &ProductHandler{svc: svc}
 }
 
-func (h *ProductHandler) RegisterRoutes(app *fiber.App) {
-	app.Get("/actuator/health", h.HealthCheck)
-	app.Get("/product/actuator/health", h.HealthCheck)
+func (h *ProductHandler) RegisterRoutes(r chi.Router) {
+	r.Get("/actuator/health", h.HealthCheck)
+	r.Get("/product/actuator/health", h.HealthCheck)
 
-	// Context root: /product
-	prodGroup := app.Group("/product")
-	h.registerCategoryRoutes(prodGroup.Group("/api/categories"))
-	h.registerProductRoutes(prodGroup.Group("/api/products"))
-
-	// Direct root
-	h.registerCategoryRoutes(app.Group("/api/categories"))
-	h.registerProductRoutes(app.Group("/api/products"))
+	// Context root: /product and direct root
+	for _, prefix := range []string{"/product", ""} {
+		h.registerCategoryRoutes(r, prefix+"/api/categories")
+		h.registerProductRoutes(r, prefix+"/api/products")
+	}
 }
 
-func (h *ProductHandler) HealthCheck(c *fiber.Ctx) error {
-	return c.JSON(fiber.Map{
-		"status": "UP",
-		"components": fiber.Map{
-			"db": fiber.Map{"status": "UP"},
-		},
-	})
+func (h *ProductHandler) HealthCheck(w http.ResponseWriter, r *http.Request) {
+	response.Health(w, "db")
 }
 
 // =================== Categories ===================
 
-func (h *ProductHandler) registerCategoryRoutes(r fiber.Router) {
-	r.Get("", h.ListCategories)
-	r.Get("/paging", h.ListCategories)
-	r.Get("/paging-and-sorting", h.ListCategories)
-	r.Get("/:categoryId", h.GetCategoryByID)
-	r.Post("", h.CreateCategory)
-	r.Put("", h.UpdateCategory)
-	r.Put("/:categoryId", h.UpdateCategoryByID)
-	r.Delete("/:categoryId", h.DeleteCategory)
+func (h *ProductHandler) registerCategoryRoutes(r chi.Router, base string) {
+	r.Get(base, h.ListCategories)
+	r.Get(base+"/paging", h.ListCategories)
+	r.Get(base+"/paging-and-sorting", h.ListCategories)
+	r.Get(base+"/{categoryId}", h.GetCategoryByID)
+	r.Post(base, h.CreateCategory)
+	r.Put(base, h.UpdateCategory)
+	r.Put(base+"/{categoryId}", h.UpdateCategoryByID)
+	r.Delete(base+"/{categoryId}", h.DeleteCategory)
 }
 
-func (h *ProductHandler) ListCategories(c *fiber.Ctx) error {
-	list, err := h.svc.FindAllCategories(c.Context())
+func (h *ProductHandler) ListCategories(w http.ResponseWriter, r *http.Request) {
+	list, err := h.svc.FindAllCategories(r.Context())
 	if err != nil {
-		return response.InternalError(c, err.Error())
+		response.InternalError(w, r, err.Error())
+		return
 	}
-	return c.JSON(list)
+	response.WriteJSON(w, http.StatusOK, list)
 }
 
-func (h *ProductHandler) GetCategoryByID(c *fiber.Ctx) error {
-	id, err := strconv.Atoi(c.Params("categoryId"))
+func (h *ProductHandler) GetCategoryByID(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(chi.URLParam(r, "categoryId"))
 	if err != nil {
-		return response.BadRequest(c, "Invalid categoryId")
+		response.BadRequest(w, r, "Invalid categoryId")
+		return
 	}
-	cat, err := h.svc.FindCategoryByID(c.Context(), id)
+	cat, err := h.svc.FindCategoryByID(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, service.ErrNotFound) {
-			return response.NotFound(c, err.Error())
+			response.NotFound(w, r, err.Error())
+			return
 		}
-		return response.InternalError(c, err.Error())
+		response.InternalError(w, r, err.Error())
+		return
 	}
-	return c.JSON(cat)
+	response.WriteJSON(w, http.StatusOK, cat)
 }
 
-func (h *ProductHandler) CreateCategory(c *fiber.Ctx) error {
+func (h *ProductHandler) CreateCategory(w http.ResponseWriter, r *http.Request) {
 	var req model.CategoryDto
-	if err := c.BodyParser(&req); err != nil {
-		return response.BadRequest(c, "Invalid request body")
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		response.BadRequest(w, r, "Invalid request body")
+		return
 	}
-	created, err := h.svc.SaveCategory(c.Context(), &req)
+	created, err := h.svc.SaveCategory(r.Context(), &req)
 	if err != nil {
-		return response.InternalError(c, err.Error())
+		response.InternalError(w, r, err.Error())
+		return
 	}
-	return c.Status(fiber.StatusCreated).JSON(created)
+	response.WriteJSON(w, http.StatusCreated, created)
 }
 
-func (h *ProductHandler) UpdateCategory(c *fiber.Ctx) error {
+func (h *ProductHandler) UpdateCategory(w http.ResponseWriter, r *http.Request) {
 	var req model.CategoryDto
-	if err := c.BodyParser(&req); err != nil {
-		return response.BadRequest(c, "Invalid request body")
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		response.BadRequest(w, r, "Invalid request body")
+		return
 	}
-	updated, err := h.svc.UpdateCategory(c.Context(), req.CategoryId, &req)
+	updated, err := h.svc.UpdateCategory(r.Context(), req.CategoryId, &req)
 	if err != nil {
-		return response.InternalError(c, err.Error())
+		response.InternalError(w, r, err.Error())
+		return
 	}
-	return c.JSON(updated)
+	response.WriteJSON(w, http.StatusOK, updated)
 }
 
-func (h *ProductHandler) UpdateCategoryByID(c *fiber.Ctx) error {
-	id, err := strconv.Atoi(c.Params("categoryId"))
+func (h *ProductHandler) UpdateCategoryByID(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(chi.URLParam(r, "categoryId"))
 	if err != nil {
-		return response.BadRequest(c, "Invalid categoryId")
+		response.BadRequest(w, r, "Invalid categoryId")
+		return
 	}
 	var req model.CategoryDto
-	if err := c.BodyParser(&req); err != nil {
-		return response.BadRequest(c, "Invalid request body")
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		response.BadRequest(w, r, "Invalid request body")
+		return
 	}
-	updated, err := h.svc.UpdateCategory(c.Context(), id, &req)
+	updated, err := h.svc.UpdateCategory(r.Context(), id, &req)
 	if err != nil {
-		return response.InternalError(c, err.Error())
+		response.InternalError(w, r, err.Error())
+		return
 	}
-	return c.JSON(updated)
+	response.WriteJSON(w, http.StatusOK, updated)
 }
 
-func (h *ProductHandler) DeleteCategory(c *fiber.Ctx) error {
-	id, err := strconv.Atoi(c.Params("categoryId"))
+func (h *ProductHandler) DeleteCategory(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(chi.URLParam(r, "categoryId"))
 	if err != nil {
-		return response.BadRequest(c, "Invalid categoryId")
+		response.BadRequest(w, r, "Invalid categoryId")
+		return
 	}
-	err = h.svc.DeleteCategory(c.Context(), id)
+	err = h.svc.DeleteCategory(r.Context(), id)
 	if err != nil {
-		return response.InternalError(c, err.Error())
+		response.InternalError(w, r, err.Error())
+		return
 	}
-	return c.JSON(true)
+	response.WriteJSON(w, http.StatusOK, true)
 }
 
 // =================== Products ===================
 
-func (h *ProductHandler) registerProductRoutes(r fiber.Router) {
-	r.Get("", h.ListProducts)
-	r.Get("/:productId", h.GetProductByID)
-	r.Post("", h.CreateProduct)
-	r.Put("", h.UpdateProduct)
-	r.Put("/:productId", h.UpdateProductByID)
-	r.Delete("/:productId", h.DeleteProduct)
+func (h *ProductHandler) registerProductRoutes(r chi.Router, base string) {
+	r.Get(base, h.ListProducts)
+	r.Get(base+"/{productId}", h.GetProductByID)
+	r.Post(base, h.CreateProduct)
+	r.Put(base, h.UpdateProduct)
+	r.Put(base+"/{productId}", h.UpdateProductByID)
+	r.Delete(base+"/{productId}", h.DeleteProduct)
 }
 
-func (h *ProductHandler) ListProducts(c *fiber.Ctx) error {
-	list, err := h.svc.FindAllProducts(c.Context())
+func (h *ProductHandler) ListProducts(w http.ResponseWriter, r *http.Request) {
+	list, err := h.svc.FindAllProducts(r.Context())
 	if err != nil {
-		return response.InternalError(c, err.Error())
+		response.InternalError(w, r, err.Error())
+		return
 	}
-	return c.JSON(list)
+	response.WriteJSON(w, http.StatusOK, list)
 }
 
-func (h *ProductHandler) GetProductByID(c *fiber.Ctx) error {
-	id, err := strconv.Atoi(c.Params("productId"))
+func (h *ProductHandler) GetProductByID(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(chi.URLParam(r, "productId"))
 	if err != nil {
-		return response.BadRequest(c, "Invalid productId")
+		response.BadRequest(w, r, "Invalid productId")
+		return
 	}
-	p, err := h.svc.FindProductByID(c.Context(), id)
+	p, err := h.svc.FindProductByID(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, service.ErrNotFound) {
-			return response.NotFound(c, err.Error())
+			response.NotFound(w, r, err.Error())
+			return
 		}
-		return response.InternalError(c, err.Error())
+		response.InternalError(w, r, err.Error())
+		return
 	}
-	return c.JSON(p)
+	response.WriteJSON(w, http.StatusOK, p)
 }
 
-func (h *ProductHandler) CreateProduct(c *fiber.Ctx) error {
+func (h *ProductHandler) CreateProduct(w http.ResponseWriter, r *http.Request) {
 	var req model.ProductDto
-	if err := c.BodyParser(&req); err != nil {
-		return response.BadRequest(c, "Invalid request body")
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		response.BadRequest(w, r, "Invalid request body")
+		return
 	}
-	created, err := h.svc.SaveProduct(c.Context(), &req)
+	created, err := h.svc.SaveProduct(r.Context(), &req)
 	if err != nil {
-		return response.InternalError(c, err.Error())
+		response.InternalError(w, r, err.Error())
+		return
 	}
-	return c.Status(fiber.StatusCreated).JSON(created)
+	response.WriteJSON(w, http.StatusCreated, created)
 }
 
-func (h *ProductHandler) UpdateProduct(c *fiber.Ctx) error {
+func (h *ProductHandler) UpdateProduct(w http.ResponseWriter, r *http.Request) {
 	var req model.ProductDto
-	if err := c.BodyParser(&req); err != nil {
-		return response.BadRequest(c, "Invalid request body")
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		response.BadRequest(w, r, "Invalid request body")
+		return
 	}
-	updated, err := h.svc.UpdateProduct(c.Context(), req.ProductId, &req)
+	updated, err := h.svc.UpdateProduct(r.Context(), req.ProductId, &req)
 	if err != nil {
-		return response.InternalError(c, err.Error())
+		response.InternalError(w, r, err.Error())
+		return
 	}
-	return c.JSON(updated)
+	response.WriteJSON(w, http.StatusOK, updated)
 }
 
-func (h *ProductHandler) UpdateProductByID(c *fiber.Ctx) error {
-	id, err := strconv.Atoi(c.Params("productId"))
+func (h *ProductHandler) UpdateProductByID(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(chi.URLParam(r, "productId"))
 	if err != nil {
-		return response.BadRequest(c, "Invalid productId")
+		response.BadRequest(w, r, "Invalid productId")
+		return
 	}
 	var req model.ProductDto
-	if err := c.BodyParser(&req); err != nil {
-		return response.BadRequest(c, "Invalid request body")
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		response.BadRequest(w, r, "Invalid request body")
+		return
 	}
-	updated, err := h.svc.UpdateProduct(c.Context(), id, &req)
+	updated, err := h.svc.UpdateProduct(r.Context(), id, &req)
 	if err != nil {
-		return response.InternalError(c, err.Error())
+		response.InternalError(w, r, err.Error())
+		return
 	}
-	return c.JSON(updated)
+	response.WriteJSON(w, http.StatusOK, updated)
 }
 
-func (h *ProductHandler) DeleteProduct(c *fiber.Ctx) error {
-	id, err := strconv.Atoi(c.Params("productId"))
+func (h *ProductHandler) DeleteProduct(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(chi.URLParam(r, "productId"))
 	if err != nil {
-		return response.BadRequest(c, "Invalid productId")
+		response.BadRequest(w, r, "Invalid productId")
+		return
 	}
-	err = h.svc.DeleteProduct(c.Context(), id)
+	err = h.svc.DeleteProduct(r.Context(), id)
 	if err != nil {
-		return response.InternalError(c, err.Error())
+		response.InternalError(w, r, err.Error())
+		return
 	}
-	return c.JSON(true)
+	response.WriteJSON(w, http.StatusOK, true)
 }

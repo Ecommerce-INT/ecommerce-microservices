@@ -6,18 +6,23 @@ import (
 
 	"com.ecommerce/inventory-service/internal/model"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/stephenafamo/bob"
+	"github.com/stephenafamo/bob/dialect/psql"
+	"github.com/stephenafamo/bob/dialect/psql/sm"
+	pgxdriver "github.com/stephenafamo/bob/drivers/pgx"
+	"github.com/stephenafamo/scan"
 )
 
 type InventoryRepository struct {
-	db *pgxpool.Pool
+	db pgxdriver.Pool
 }
 
-func NewInventoryRepository(db *pgxpool.Pool) *InventoryRepository {
-	return &InventoryRepository{db: db}
+func NewInventoryRepository(pool *pgxpool.Pool) *InventoryRepository {
+	return &InventoryRepository{db: pgxdriver.NewPool(pool)}
 }
 
 func (r *InventoryRepository) InitSchema(ctx context.Context) {
-	if r.db == nil {
+	if r.db.Pool == nil {
 		return
 	}
 	query := `
@@ -33,24 +38,22 @@ func (r *InventoryRepository) InitSchema(ctx context.Context) {
 }
 
 func (r *InventoryRepository) FindByProductNames(ctx context.Context, productNames []string) ([]model.Inventory, error) {
-	if r.db == nil || len(productNames) == 0 {
+	if r.db.Pool == nil || len(productNames) == 0 {
 		return []model.Inventory{}, nil
 	}
 
-	query := `SELECT id, product_name, quantity FROM inventory WHERE product_name = ANY($1)`
-	rows, err := r.db.Query(ctx, query, productNames)
+	query := psql.Select(
+		sm.Columns(
+			psql.Quote("id"),
+			psql.Quote("product_name"),
+			psql.Quote("quantity"),
+		),
+		sm.From("inventory"),
+		sm.Where(psql.Quote("product_name").EQ(psql.Any(psql.Arg(productNames)))),
+	)
+	list, err := bob.All(ctx, r.db, query, scan.StructMapper[model.Inventory]())
 	if err != nil {
 		return nil, err
-	}
-	defer rows.Close()
-
-	var list []model.Inventory
-	for rows.Next() {
-		var item model.Inventory
-		if err := rows.Scan(&item.ID, &item.ProductName, &item.Quantity); err != nil {
-			return nil, err
-		}
-		list = append(list, item)
 	}
 	if list == nil {
 		list = []model.Inventory{}

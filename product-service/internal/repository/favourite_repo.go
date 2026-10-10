@@ -2,19 +2,42 @@ package repository
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
 	"com.ecommerce/product-service/internal/model"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/stephenafamo/bob"
+	"github.com/stephenafamo/bob/dialect/psql"
+	"github.com/stephenafamo/bob/dialect/psql/dm"
+	"github.com/stephenafamo/bob/dialect/psql/im"
+	"github.com/stephenafamo/bob/dialect/psql/sm"
+	pgxdriver "github.com/stephenafamo/bob/drivers/pgx"
+	"github.com/stephenafamo/scan"
 )
 
 type FavouriteRepository struct {
-	db *pgxpool.Pool
+	db pgxdriver.Pool
 }
 
-func NewFavouriteRepository(db *pgxpool.Pool) *FavouriteRepository {
-	return &FavouriteRepository{db: db}
+func NewFavouriteRepository(pool *pgxpool.Pool) *FavouriteRepository {
+	return &FavouriteRepository{db: pgxdriver.NewPool(pool)}
+}
+
+type favouriteRow struct {
+	UserID    int       `db:"user_id"`
+	ProductID int       `db:"product_id"`
+	LikeDate  time.Time `db:"like_date"`
+}
+
+func (row favouriteRow) toDto() model.FavouriteDto {
+	return model.FavouriteDto{
+		UserID:    row.UserID,
+		ProductID: row.ProductID,
+		LikeDate:  formatLikeDate(row.LikeDate),
+	}
 }
 
 func parseLikeDate(dateStr string) (time.Time, error) {
@@ -38,65 +61,64 @@ func formatLikeDate(t time.Time) string {
 }
 
 func (r *FavouriteRepository) FindAll(ctx context.Context) ([]model.FavouriteDto, error) {
-	if r.db == nil {
+	if r.db.Pool == nil {
 		return []model.FavouriteDto{}, nil
 	}
-	rows, err := r.db.Query(ctx, `SELECT user_id, product_id, like_date FROM favourites ORDER BY like_date DESC`)
+	query := psql.Select(
+		sm.Columns(
+			psql.Quote("user_id"),
+			psql.Quote("product_id"),
+			psql.Quote("like_date"),
+		),
+		sm.From("favourites"),
+		sm.OrderBy(psql.Quote("like_date")).Desc(),
+	)
+	rows, err := bob.All(ctx, r.db, query, scan.StructMapper[favouriteRow]())
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
-	var result []model.FavouriteDto
-	for rows.Next() {
-		var (
-			userID    int
-			productID int
-			likeDate  time.Time
-		)
-		if err := rows.Scan(&userID, &productID, &likeDate); err != nil {
-			return nil, err
-		}
-		result = append(result, model.FavouriteDto{
-			UserID:    userID,
-			ProductID: productID,
-			LikeDate:  formatLikeDate(likeDate),
-		})
-	}
-	if result == nil {
-		result = []model.FavouriteDto{}
+	result := make([]model.FavouriteDto, 0, len(rows))
+	for _, row := range rows {
+		result = append(result, row.toDto())
 	}
 	return result, nil
 }
 
 func (r *FavouriteRepository) FindByID(ctx context.Context, id model.FavouriteID) (*model.FavouriteDto, error) {
-	if r.db == nil {
+	if r.db.Pool == nil {
 		return nil, nil
 	}
 	t, err := parseLikeDate(id.LikeDate)
 	if err != nil {
 		return nil, fmt.Errorf("invalid likeDate: %w", err)
 	}
-
-	var (
-		userID    int
-		productID int
-		likeDate  time.Time
+	query := psql.Select(
+		sm.Columns(
+			psql.Quote("user_id"),
+			psql.Quote("product_id"),
+			psql.Quote("like_date"),
+		),
+		sm.From("favourites"),
+		sm.Where(psql.And(
+			psql.Quote("user_id").EQ(psql.Arg(id.UserID)),
+			psql.Quote("product_id").EQ(psql.Arg(id.ProductID)),
+			psql.Quote("like_date").EQ(psql.Arg(t)),
+		)),
+		sm.Limit(1),
 	)
-	err = r.db.QueryRow(ctx, `SELECT user_id, product_id, like_date FROM favourites WHERE user_id = $1 AND product_id = $2 AND like_date = $3 LIMIT 1`, id.UserID, id.ProductID, t).Scan(&userID, &productID, &likeDate)
+	row, err := bob.One(ctx, r.db, query, scan.StructMapper[favouriteRow]())
 	if err != nil {
-		return nil, nil
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
 	}
-
-	return &model.FavouriteDto{
-		UserID:    userID,
-		ProductID: productID,
-		LikeDate:  formatLikeDate(likeDate),
-	}, nil
+	dto := row.toDto()
+	return &dto, nil
 }
 
 func (r *FavouriteRepository) Save(ctx context.Context, dto model.FavouriteDto) (*model.FavouriteDto, error) {
-	if r.db == nil {
+	if r.db.Pool == nil {
 		return &dto, nil
 	}
 	t, err := parseLikeDate(dto.LikeDate)
@@ -105,21 +127,24 @@ func (r *FavouriteRepository) Save(ctx context.Context, dto model.FavouriteDto) 
 		dto.LikeDate = formatLikeDate(t)
 	}
 
-	query := `
-		INSERT INTO favourites (user_id, product_id, like_date)
-		VALUES ($1, $2, $3)
-		ON CONFLICT (user_id, product_id, like_date) DO UPDATE
-		SET updated_at = CURRENT_TIMESTAMP
-	`
-	_, err = r.db.Exec(ctx, query, dto.UserID, dto.ProductID, t)
-	if err != nil {
+	query := psql.Insert(
+		im.Into("favourites", "user_id", "product_id", "like_date"),
+		im.Values(
+			psql.Arg(dto.UserID),
+			psql.Arg(dto.ProductID),
+			psql.Arg(t),
+		),
+		im.OnConflict("user_id", "product_id", "like_date").
+			DoUpdate(im.Set(psql.Quote("updated_at").EQ(psql.Raw("CURRENT_TIMESTAMP")))),
+	)
+	if _, err := bob.Exec(ctx, r.db, query); err != nil {
 		return nil, err
 	}
 	return &dto, nil
 }
 
 func (r *FavouriteRepository) DeleteByID(ctx context.Context, id model.FavouriteID) (bool, error) {
-	if r.db == nil {
+	if r.db.Pool == nil {
 		return true, nil
 	}
 	t, err := parseLikeDate(id.LikeDate)
@@ -127,9 +152,21 @@ func (r *FavouriteRepository) DeleteByID(ctx context.Context, id model.Favourite
 		return false, fmt.Errorf("invalid likeDate: %w", err)
 	}
 
-	cmd, err := r.db.Exec(ctx, `DELETE FROM favourites WHERE user_id = $1 AND product_id = $2 AND like_date = $3`, id.UserID, id.ProductID, t)
+	query := psql.Delete(
+		dm.From("favourites"),
+		dm.Where(psql.And(
+			psql.Quote("user_id").EQ(psql.Arg(id.UserID)),
+			psql.Quote("product_id").EQ(psql.Arg(id.ProductID)),
+			psql.Quote("like_date").EQ(psql.Arg(t)),
+		)),
+	)
+	result, err := bob.Exec(ctx, r.db, query)
 	if err != nil {
 		return false, err
 	}
-	return cmd.RowsAffected() >= 0, nil
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return affected >= 0, nil
 }

@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
@@ -10,15 +12,14 @@ import (
 	"time"
 
 	"com.ecommerce/pkg/common/config"
-	"com.ecommerce/pkg/common/middleware"
+	commonmw "com.ecommerce/pkg/common/middleware"
 	"com.ecommerce/search-service/internal/consumer"
 	"com.ecommerce/search-service/internal/handler"
 	"com.ecommerce/search-service/internal/service"
 	"github.com/elastic/go-elasticsearch/v8"
-	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/middleware/cors"
-	"github.com/gofiber/fiber/v2/middleware/logger"
-	"github.com/gofiber/fiber/v2/middleware/recover"
+	"github.com/go-chi/chi/v5"
+	chimiddleware "github.com/go-chi/chi/v5/middleware"
+	"github.com/go-chi/cors"
 )
 
 func main() {
@@ -55,27 +56,26 @@ func main() {
 	syncConsumer := consumer.NewProductSyncConsumer(svc, brokers, topicName, "search-group")
 	syncConsumer.Start(ctx)
 
-	app := fiber.New(fiber.Config{
-		AppName:               "Ecommerce Search Service (Golang)",
-		DisableStartupMessage: false,
-	})
-
-	app.Use(recover.New())
-	app.Use(logger.New(logger.Config{
-		Format: "[${time}] ${status} - ${latency} ${method} ${path}\n",
+	r := chi.NewRouter()
+	r.Use(chimiddleware.Recoverer)
+	r.Use(chimiddleware.Logger)
+	r.Use(cors.Handler(cors.Options{
+		AllowedOrigins: []string{"*"},
+		AllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowedHeaders: []string{"Origin", "Content-Type", "Accept", "Authorization", "X-Correlation-Id"},
 	}))
-	app.Use(cors.New(cors.Config{
-		AllowOrigins: "*",
-		AllowHeaders: "Origin, Content-Type, Accept, Authorization, X-Correlation-Id",
-		AllowMethods: "GET, POST, PUT, DELETE, OPTIONS",
-	}))
-	app.Use(middleware.CorrelationID())
-	app.Use(middleware.UserClaims())
+	r.Use(commonmw.CorrelationID)
+	r.Use(commonmw.UserClaims)
 
-	h.RegisterRoutes(app)
+	h.RegisterRoutes(r)
+
+	srv := &http.Server{
+		Addr:    ":" + port,
+		Handler: r,
+	}
 
 	go func() {
-		if err := app.Listen(":" + port); err != nil {
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Fatalf("Server listen failed: %v", err)
 		}
 	}()
@@ -88,7 +88,7 @@ func main() {
 	ctxShutdown, cancelShutdown := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancelShutdown()
 
-	if err := app.ShutdownWithContext(ctxShutdown); err != nil {
+	if err := srv.Shutdown(ctxShutdown); err != nil {
 		log.Fatalf("Error during server shutdown: %v", err)
 	}
 	log.Println("[Search Service] Server exited successfully.")

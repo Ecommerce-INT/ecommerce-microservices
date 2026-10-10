@@ -2,24 +2,33 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"log"
 
 	"com.ecommerce/product-service/internal/model"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/stephenafamo/bob"
+	"github.com/stephenafamo/bob/dialect/psql"
+	"github.com/stephenafamo/bob/dialect/psql/dm"
+	"github.com/stephenafamo/bob/dialect/psql/fm"
+	"github.com/stephenafamo/bob/dialect/psql/im"
+	"github.com/stephenafamo/bob/dialect/psql/sm"
+	"github.com/stephenafamo/bob/dialect/psql/um"
+	pgxdriver "github.com/stephenafamo/bob/drivers/pgx"
+	"github.com/stephenafamo/scan"
 )
 
 type ProductRepository struct {
-	db *pgxpool.Pool
+	db pgxdriver.Pool
 }
 
-func NewProductRepository(db *pgxpool.Pool) *ProductRepository {
-	return &ProductRepository{db: db}
+func NewProductRepository(pool *pgxpool.Pool) *ProductRepository {
+	return &ProductRepository{db: pgxdriver.NewPool(pool)}
 }
 
 func (r *ProductRepository) InitSchema(ctx context.Context) {
-	if r.db == nil {
+	if r.db.Pool == nil {
 		return
 	}
 	query := `
@@ -60,24 +69,26 @@ func (r *ProductRepository) InitSchema(ctx context.Context) {
 
 // =================== Categories ===================
 
+func categoryColumns() []any {
+	return []any{
+		psql.Quote("category_id"),
+		psql.Quote("category_title"),
+		psql.F("COALESCE", psql.Quote("image_url"), psql.S(""))(fm.As("image_url")),
+	}
+}
+
 func (r *ProductRepository) FindAllCategories(ctx context.Context) ([]model.CategoryDto, error) {
-	if r.db == nil {
+	if r.db.Pool == nil {
 		return []model.CategoryDto{}, nil
 	}
-	query := `SELECT category_id, category_title, COALESCE(image_url, '') FROM categories ORDER BY category_id ASC`
-	rows, err := r.db.Query(ctx, query)
+	query := psql.Select(
+		sm.Columns(categoryColumns()...),
+		sm.From("categories"),
+		sm.OrderBy(psql.Quote("category_id")).Asc(),
+	)
+	list, err := bob.All(ctx, r.db, query, scan.StructMapper[model.CategoryDto]())
 	if err != nil {
 		return nil, err
-	}
-	defer rows.Close()
-
-	var list []model.CategoryDto
-	for rows.Next() {
-		var c model.CategoryDto
-		if err := rows.Scan(&c.CategoryId, &c.CategoryTitle, &c.ImageUrl); err != nil {
-			return nil, err
-		}
-		list = append(list, c)
 	}
 	if list == nil {
 		list = []model.CategoryDto{}
@@ -86,14 +97,17 @@ func (r *ProductRepository) FindAllCategories(ctx context.Context) ([]model.Cate
 }
 
 func (r *ProductRepository) FindCategoryByID(ctx context.Context, id int) (*model.CategoryDto, error) {
-	if r.db == nil {
+	if r.db.Pool == nil {
 		return nil, nil
 	}
-	query := `SELECT category_id, category_title, COALESCE(image_url, '') FROM categories WHERE category_id = $1`
-	var c model.CategoryDto
-	err := r.db.QueryRow(ctx, query, id).Scan(&c.CategoryId, &c.CategoryTitle, &c.ImageUrl)
+	query := psql.Select(
+		sm.Columns(categoryColumns()...),
+		sm.From("categories"),
+		sm.Where(psql.Quote("category_id").EQ(psql.Arg(id))),
+	)
+	c, err := bob.One(ctx, r.db, query, scan.StructMapper[model.CategoryDto]())
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
@@ -102,150 +116,207 @@ func (r *ProductRepository) FindCategoryByID(ctx context.Context, id int) (*mode
 }
 
 func (r *ProductRepository) SaveCategory(ctx context.Context, c *model.CategoryDto) (int, error) {
-	if r.db == nil {
+	if r.db.Pool == nil {
 		return 1, nil
 	}
 	var parentID *int
 	if c.ParentCategory != nil && c.ParentCategory.CategoryId > 0 {
 		parentID = &c.ParentCategory.CategoryId
 	}
-	var id int
-	query := `INSERT INTO categories (category_title, image_url, parent_category_id, created_at, updated_at) VALUES ($1, $2, $3, NOW(), NOW()) RETURNING category_id`
-	err := r.db.QueryRow(ctx, query, c.CategoryTitle, c.ImageUrl, parentID).Scan(&id)
-	return id, err
+	query := psql.Insert(
+		im.Into("categories", "category_title", "image_url", "parent_category_id", "created_at", "updated_at"),
+		im.Values(
+			psql.Arg(c.CategoryTitle),
+			psql.Arg(c.ImageUrl),
+			psql.Arg(parentID),
+			psql.Raw("NOW()"),
+			psql.Raw("NOW()"),
+		),
+		im.Returning("category_id"),
+	)
+	return bob.One(ctx, r.db, query, scan.SingleColumnMapper[int])
 }
 
 func (r *ProductRepository) UpdateCategory(ctx context.Context, id int, c *model.CategoryDto) error {
-	if r.db == nil {
+	if r.db.Pool == nil {
 		return nil
 	}
 	var parentID *int
 	if c.ParentCategory != nil && c.ParentCategory.CategoryId > 0 {
 		parentID = &c.ParentCategory.CategoryId
 	}
-	query := `UPDATE categories SET category_title = $1, image_url = $2, parent_category_id = $3, updated_at = NOW() WHERE category_id = $4`
-	_, err := r.db.Exec(ctx, query, c.CategoryTitle, c.ImageUrl, parentID, id)
+	query := psql.Update(
+		um.Table("categories"),
+		um.Set(
+			psql.Quote("category_title").EQ(psql.Arg(c.CategoryTitle)),
+			psql.Quote("image_url").EQ(psql.Arg(c.ImageUrl)),
+			psql.Quote("parent_category_id").EQ(psql.Arg(parentID)),
+			psql.Quote("updated_at").EQ(psql.Raw("NOW()")),
+		),
+		um.Where(psql.Quote("category_id").EQ(psql.Arg(id))),
+	)
+	_, err := bob.Exec(ctx, r.db, query)
 	return err
 }
 
 func (r *ProductRepository) DeleteCategory(ctx context.Context, id int) error {
-	if r.db == nil {
+	if r.db.Pool == nil {
 		return nil
 	}
-	_, err := r.db.Exec(ctx, `DELETE FROM categories WHERE category_id = $1`, id)
+	query := psql.Delete(
+		dm.From("categories"),
+		dm.Where(psql.Quote("category_id").EQ(psql.Arg(id))),
+	)
+	_, err := bob.Exec(ctx, r.db, query)
 	return err
 }
 
 // =================== Products ===================
 
+// productRow mirrors the joined products/categories projection used for scanning.
+type productRow struct {
+	ProductId        int     `db:"product_id"`
+	ProductTitle     string  `db:"product_title"`
+	ImageUrl         string  `db:"image_url"`
+	Sku              string  `db:"sku"`
+	PriceUnit        float64 `db:"price_unit"`
+	Quantity         int     `db:"quantity"`
+	CategoryId       int     `db:"category_id"`
+	CategoryTitle    string  `db:"category_title"`
+	CategoryImageUrl string  `db:"category_image_url"`
+}
+
+func (row productRow) toDto() model.ProductDto {
+	p := model.ProductDto{
+		ProductId:    row.ProductId,
+		ProductTitle: row.ProductTitle,
+		ImageUrl:     row.ImageUrl,
+		Sku:          row.Sku,
+		PriceUnit:    row.PriceUnit,
+		Quantity:     row.Quantity,
+	}
+	if row.CategoryId > 0 {
+		p.Category = &model.CategoryDto{
+			CategoryId:    row.CategoryId,
+			CategoryTitle: row.CategoryTitle,
+			ImageUrl:      row.CategoryImageUrl,
+		}
+	}
+	return p
+}
+
+func productColumns() []any {
+	return []any{
+		psql.Quote("p", "product_id"),
+		psql.Quote("p", "product_title"),
+		psql.F("COALESCE", psql.Quote("p", "image_url"), psql.S(""))(fm.As("image_url")),
+		psql.F("COALESCE", psql.Quote("p", "sku"), psql.S(""))(fm.As("sku")),
+		psql.F("COALESCE", psql.Quote("p", "price_unit"), psql.Arg(0))(fm.As("price_unit")),
+		psql.F("COALESCE", psql.Quote("p", "quantity"), psql.Arg(0))(fm.As("quantity")),
+		psql.F("COALESCE", psql.Quote("c", "category_id"), psql.Arg(0))(fm.As("category_id")),
+		psql.F("COALESCE", psql.Quote("c", "category_title"), psql.S(""))(fm.As("category_title")),
+		psql.F("COALESCE", psql.Quote("c", "image_url"), psql.S(""))(fm.As("category_image_url")),
+	}
+}
+
 func (r *ProductRepository) FindAllProducts(ctx context.Context) ([]model.ProductDto, error) {
-	if r.db == nil {
+	if r.db.Pool == nil {
 		return []model.ProductDto{}, nil
 	}
-	query := `
-		SELECT p.product_id, p.product_title, COALESCE(p.image_url, ''), COALESCE(p.sku, ''),
-		       COALESCE(p.price_unit, 0), COALESCE(p.quantity, 0),
-		       COALESCE(c.category_id, 0), COALESCE(c.category_title, ''), COALESCE(c.image_url, '')
-		FROM products p
-		LEFT JOIN categories c ON p.category_id = c.category_id
-		ORDER BY p.product_id DESC`
-	rows, err := r.db.Query(ctx, query)
+	query := psql.Select(
+		sm.Columns(productColumns()...),
+		sm.From("products p", sm.LeftJoin("categories c").On(psql.Raw("c.category_id = p.category_id"))),
+		sm.OrderBy(psql.Quote("p", "product_id")).Desc(),
+	)
+	rows, err := bob.All(ctx, r.db, query, scan.StructMapper[productRow]())
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
-	var list []model.ProductDto
-	for rows.Next() {
-		var p model.ProductDto
-		var catID int
-		var catTitle, catImage string
-		if err := rows.Scan(&p.ProductId, &p.ProductTitle, &p.ImageUrl, &p.Sku, &p.PriceUnit, &p.Quantity, &catID, &catTitle, &catImage); err != nil {
-			return nil, err
-		}
-		if catID > 0 {
-			p.Category = &model.CategoryDto{
-				CategoryId:    catID,
-				CategoryTitle: catTitle,
-				ImageUrl:      catImage,
-			}
-		}
-		list = append(list, p)
-	}
-	if list == nil {
-		list = []model.ProductDto{}
+	list := make([]model.ProductDto, 0, len(rows))
+	for _, row := range rows {
+		list = append(list, row.toDto())
 	}
 	return list, nil
 }
 
 func (r *ProductRepository) FindProductByID(ctx context.Context, id int) (*model.ProductDto, error) {
-	if r.db == nil {
+	if r.db.Pool == nil {
 		return nil, nil
 	}
-	query := `
-		SELECT p.product_id, p.product_title, COALESCE(p.image_url, ''), COALESCE(p.sku, ''),
-		       COALESCE(p.price_unit, 0), COALESCE(p.quantity, 0),
-		       COALESCE(c.category_id, 0), COALESCE(c.category_title, ''), COALESCE(c.image_url, '')
-		FROM products p
-		LEFT JOIN categories c ON p.category_id = c.category_id
-		WHERE p.product_id = $1`
-	var p model.ProductDto
-	var catID int
-	var catTitle, catImage string
-	err := r.db.QueryRow(ctx, query, id).Scan(&p.ProductId, &p.ProductTitle, &p.ImageUrl, &p.Sku, &p.PriceUnit, &p.Quantity, &catID, &catTitle, &catImage)
+	query := psql.Select(
+		sm.Columns(productColumns()...),
+		sm.From("products p", sm.LeftJoin("categories c").On(psql.Raw("c.category_id = p.category_id"))),
+		sm.Where(psql.Quote("p", "product_id").EQ(psql.Arg(id))),
+	)
+	row, err := bob.One(ctx, r.db, query, scan.StructMapper[productRow]())
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
 	}
-	if catID > 0 {
-		p.Category = &model.CategoryDto{
-			CategoryId:    catID,
-			CategoryTitle: catTitle,
-			ImageUrl:      catImage,
-		}
-	}
+	p := row.toDto()
 	return &p, nil
 }
 
 func (r *ProductRepository) SaveProduct(ctx context.Context, p *model.ProductDto) (int, error) {
-	if r.db == nil {
+	if r.db.Pool == nil {
 		return 1, nil
 	}
 	var catID *int
 	if p.Category != nil && p.Category.CategoryId > 0 {
 		catID = &p.Category.CategoryId
 	}
-	var id int
-	query := `
-		INSERT INTO products (product_title, image_url, sku, price_unit, quantity, category_id, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
-		RETURNING product_id`
-	err := r.db.QueryRow(ctx, query, p.ProductTitle, p.ImageUrl, p.Sku, p.PriceUnit, p.Quantity, catID).Scan(&id)
-	return id, err
+	query := psql.Insert(
+		im.Into("products", "product_title", "image_url", "sku", "price_unit", "quantity", "category_id", "created_at", "updated_at"),
+		im.Values(
+			psql.Arg(p.ProductTitle),
+			psql.Arg(p.ImageUrl),
+			psql.Arg(p.Sku),
+			psql.Arg(p.PriceUnit),
+			psql.Arg(p.Quantity),
+			psql.Arg(catID),
+			psql.Raw("NOW()"),
+			psql.Raw("NOW()"),
+		),
+		im.Returning("product_id"),
+	)
+	return bob.One(ctx, r.db, query, scan.SingleColumnMapper[int])
 }
 
 func (r *ProductRepository) UpdateProduct(ctx context.Context, id int, p *model.ProductDto) error {
-	if r.db == nil {
+	if r.db.Pool == nil {
 		return nil
 	}
 	var catID *int
 	if p.Category != nil && p.Category.CategoryId > 0 {
 		catID = &p.Category.CategoryId
 	}
-	query := `
-		UPDATE products
-		SET product_title = $1, image_url = $2, sku = $3, price_unit = $4, quantity = $5, category_id = $6, updated_at = NOW()
-		WHERE product_id = $7`
-	_, err := r.db.Exec(ctx, query, p.ProductTitle, p.ImageUrl, p.Sku, p.PriceUnit, p.Quantity, catID, id)
+	query := psql.Update(
+		um.Table("products"),
+		um.Set(
+			psql.Quote("product_title").EQ(psql.Arg(p.ProductTitle)),
+			psql.Quote("image_url").EQ(psql.Arg(p.ImageUrl)),
+			psql.Quote("sku").EQ(psql.Arg(p.Sku)),
+			psql.Quote("price_unit").EQ(psql.Arg(p.PriceUnit)),
+			psql.Quote("quantity").EQ(psql.Arg(p.Quantity)),
+			psql.Quote("category_id").EQ(psql.Arg(catID)),
+			psql.Quote("updated_at").EQ(psql.Raw("NOW()")),
+		),
+		um.Where(psql.Quote("product_id").EQ(psql.Arg(id))),
+	)
+	_, err := bob.Exec(ctx, r.db, query)
 	return err
 }
 
 func (r *ProductRepository) DeleteProduct(ctx context.Context, id int) error {
-	if r.db == nil {
+	if r.db.Pool == nil {
 		return nil
 	}
-	_, err := r.db.Exec(ctx, `DELETE FROM products WHERE product_id = $1`, id)
+	query := psql.Delete(
+		dm.From("products"),
+		dm.Where(psql.Quote("product_id").EQ(psql.Arg(id))),
+	)
+	_, err := bob.Exec(ctx, r.db, query)
 	return err
 }

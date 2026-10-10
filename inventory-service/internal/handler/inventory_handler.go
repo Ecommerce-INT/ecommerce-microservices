@@ -1,11 +1,12 @@
 package handler
 
 import (
+	"net/http"
 	"strings"
 
-	"com.ecommerce/pkg/common/response"
 	"com.ecommerce/inventory-service/internal/service"
-	"github.com/gofiber/fiber/v2"
+	"com.ecommerce/pkg/common/response"
+	"github.com/go-chi/chi/v5"
 )
 
 type InventoryHandler struct {
@@ -16,50 +17,29 @@ func NewInventoryHandler(svc *service.InventoryService) *InventoryHandler {
 	return &InventoryHandler{svc: svc}
 }
 
-func (h *InventoryHandler) RegisterRoutes(app *fiber.App) {
-	app.Get("/actuator/health", h.HealthCheck)
-	app.Get("/inventory/actuator/health", h.HealthCheck)
+func (h *InventoryHandler) RegisterRoutes(r chi.Router) {
+	r.Get("/actuator/health", h.HealthCheck)
+	r.Get("/inventory/actuator/health", h.HealthCheck)
 
-	// Context root: /inventory
-	invGroup := app.Group("/inventory/api/inventory")
-	h.registerEndpoints(invGroup)
-
-	// Direct root
-	directGroup := app.Group("/api/inventory")
-	h.registerEndpoints(directGroup)
+	// Context root: /inventory and direct root
+	for _, base := range []string{"/inventory/api/inventory", "/api/inventory"} {
+		h.registerEndpoints(r, base)
+	}
 }
 
-func (h *InventoryHandler) registerEndpoints(r fiber.Router) {
-	r.Get("", h.IsInStock)
-	r.Get("/:products", h.IsInStockPath)
+func (h *InventoryHandler) registerEndpoints(r chi.Router, base string) {
+	r.Get(base, h.IsInStock)
+	r.Get(base+"/{products}", h.IsInStockPath)
 }
 
-func (h *InventoryHandler) HealthCheck(c *fiber.Ctx) error {
-	return c.JSON(fiber.Map{
-		"status": "UP",
-		"components": fiber.Map{
-			"db": fiber.Map{"status": "UP"},
-		},
-	})
+func (h *InventoryHandler) HealthCheck(w http.ResponseWriter, r *http.Request) {
+	response.Health(w, "db")
 }
 
-func (h *InventoryHandler) IsInStock(c *fiber.Ctx) error {
-	// Support both ?productName=a&productName=b and ?productName=a,b
-	queryValues := c.Context().QueryArgs().PeekMulti("productName")
+func splitProductNames(values []string) []string {
 	var names []string
-
-	if len(queryValues) > 0 {
-		for _, qv := range queryValues {
-			parts := strings.Split(string(qv), ",")
-			for _, p := range parts {
-				trimmed := strings.TrimSpace(p)
-				if trimmed != "" {
-					names = append(names, trimmed)
-				}
-			}
-		}
-	} else if pParam := c.Query("productName"); pParam != "" {
-		parts := strings.Split(pParam, ",")
+	for _, value := range values {
+		parts := strings.Split(value, ",")
 		for _, p := range parts {
 			trimmed := strings.TrimSpace(p)
 			if trimmed != "" {
@@ -67,28 +47,28 @@ func (h *InventoryHandler) IsInStock(c *fiber.Ctx) error {
 			}
 		}
 	}
-
-	result, err := h.svc.IsInStock(c.Context(), names)
-	if err != nil {
-		return response.InternalError(c, err.Error())
-	}
-	return c.JSON(result)
+	return names
 }
 
-func (h *InventoryHandler) IsInStockPath(c *fiber.Ctx) error {
-	products := c.Params("products")
-	parts := strings.Split(products, ",")
-	var names []string
-	for _, p := range parts {
-		trimmed := strings.TrimSpace(p)
-		if trimmed != "" {
-			names = append(names, trimmed)
-		}
-	}
+func (h *InventoryHandler) IsInStock(w http.ResponseWriter, r *http.Request) {
+	// Support both ?productName=a&productName=b and ?productName=a,b
+	names := splitProductNames(r.URL.Query()["productName"])
 
-	result, err := h.svc.IsInStock(c.Context(), names)
+	result, err := h.svc.IsInStock(r.Context(), names)
 	if err != nil {
-		return response.InternalError(c, err.Error())
+		response.InternalError(w, r, err.Error())
+		return
 	}
-	return c.JSON(result)
+	response.WriteJSON(w, http.StatusOK, result)
+}
+
+func (h *InventoryHandler) IsInStockPath(w http.ResponseWriter, r *http.Request) {
+	names := splitProductNames([]string{chi.URLParam(r, "products")})
+
+	result, err := h.svc.IsInStock(r.Context(), names)
+	if err != nil {
+		response.InternalError(w, r, err.Error())
+		return
+	}
+	response.WriteJSON(w, http.StatusOK, result)
 }

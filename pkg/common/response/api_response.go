@@ -1,9 +1,11 @@
 package response
 
 import (
+	"encoding/json"
+	"net/http"
 	"time"
 
-	"github.com/gofiber/fiber/v2"
+	"com.ecommerce/pkg/common/middleware"
 )
 
 // ApiResponse represents the platform unified response envelope
@@ -18,42 +20,56 @@ type ApiResponse[T any] struct {
 	Timestamp time.Time `json:"timestamp"`
 }
 
-func OK[T any](c *fiber.Ctx, data T, message ...string) error {
+// WriteJSON writes v as an application/json response with the given status code.
+func WriteJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+func OK[T any](w http.ResponseWriter, r *http.Request, data T, message ...string) {
 	msg := ""
 	if len(message) > 0 {
 		msg = message[0]
 	}
-	traceID, _ := c.Locals("correlation_id").(string)
-	return c.JSON(ApiResponse[T]{
+	WriteJSON(w, http.StatusOK, ApiResponse[T]{
 		Success:   true,
 		Code:      "OK",
 		Message:   msg,
 		Data:      data,
-		TraceID:   traceID,
+		TraceID:   middleware.GetCorrelationID(r.Context()),
 		Timestamp: time.Now().UTC(),
 	})
 }
 
-func Message(c *fiber.Ctx, message string) error {
-	traceID, _ := c.Locals("correlation_id").(string)
-	return c.JSON(ApiResponse[any]{
+func Message(w http.ResponseWriter, r *http.Request, message string) {
+	WriteJSON(w, http.StatusOK, ApiResponse[any]{
 		Success:   true,
 		Code:      "OK",
 		Message:   message,
-		TraceID:   traceID,
+		TraceID:   middleware.GetCorrelationID(r.Context()),
 		Timestamp: time.Now().UTC(),
 	})
 }
 
-func Error(c *fiber.Ctx, status int, code, message string, errors ...string) error {
-	traceID, _ := c.Locals("correlation_id").(string)
-	return c.Status(status).JSON(ApiResponse[any]{
+func Error(w http.ResponseWriter, r *http.Request, status int, code, message string, errors ...string) {
+	WriteJSON(w, status, ApiResponse[any]{
 		Success:   false,
 		Code:      code,
 		Message:   message,
 		Errors:    errors,
-		Path:      c.Path(),
-		TraceID:   traceID,
+		Path:      r.URL.Path,
+		TraceID:   middleware.GetCorrelationID(r.Context()),
 		Timestamp: time.Now().UTC(),
+	})
+}
+
+// Health writes the liveness payload consumed by the Kubernetes probes.
+func Health(w http.ResponseWriter, component string) {
+	WriteJSON(w, http.StatusOK, map[string]any{
+		"status": "UP",
+		"components": map[string]any{
+			component: map[string]any{"status": "UP"},
+		},
 	})
 }

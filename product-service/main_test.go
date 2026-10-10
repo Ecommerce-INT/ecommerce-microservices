@@ -2,136 +2,88 @@ package main
 
 import (
 	"bytes"
+	"io"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"com.ecommerce/product-service/internal/handler"
 	"com.ecommerce/product-service/internal/repository"
 	"com.ecommerce/product-service/internal/service"
-	"github.com/gofiber/fiber/v2"
+	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
 )
 
-func setupProductApp() *fiber.App {
-	app := fiber.New()
+func setupProductApp() http.Handler {
+	r := chi.NewRouter()
+
 	repo := repository.NewProductRepository(nil)
 	svc := service.NewProductService(repo)
 	h := handler.NewProductHandler(svc)
-	h.RegisterRoutes(app)
+	h.RegisterRoutes(r)
 
 	favRepo := repository.NewFavouriteRepository(nil)
 	favSvc := service.NewFavouriteService(favRepo)
 	favH := handler.NewFavouriteHandler(favSvc)
-	favH.RegisterRoutes(app)
+	favH.RegisterRoutes(r)
 
-	return app
+	return r
+}
+
+func performRequest(app http.Handler, method, target string, body []byte) *httptest.ResponseRecorder {
+	var reader io.Reader
+	if body != nil {
+		reader = bytes.NewReader(body)
+	}
+	req := httptest.NewRequest(method, target, reader)
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	rec := httptest.NewRecorder()
+	app.ServeHTTP(rec, req)
+	return rec
 }
 
 func TestHealthCheck(t *testing.T) {
 	app := setupProductApp()
 
-	req := httptest.NewRequest("GET", "/actuator/health", nil)
-	resp, err := app.Test(req, -1)
-	assert.NoError(t, err)
-	assert.Equal(t, 200, resp.StatusCode)
-
-	reqProd := httptest.NewRequest("GET", "/product/actuator/health", nil)
-	respProd, err := app.Test(reqProd, -1)
-	assert.NoError(t, err)
-	assert.Equal(t, 200, respProd.StatusCode)
-
-	reqFav := httptest.NewRequest("GET", "/favourite/actuator/health", nil)
-	respFav, err := app.Test(reqFav, -1)
-	assert.NoError(t, err)
-	assert.Equal(t, 200, respFav.StatusCode)
+	assert.Equal(t, 200, performRequest(app, "GET", "/actuator/health", nil).Code)
+	assert.Equal(t, 200, performRequest(app, "GET", "/product/actuator/health", nil).Code)
+	assert.Equal(t, 200, performRequest(app, "GET", "/favourite/actuator/health", nil).Code)
 }
 
 func TestCategoryEndpoints(t *testing.T) {
 	app := setupProductApp()
 
-	// List categories
-	req := httptest.NewRequest("GET", "/api/categories", nil)
-	resp, err := app.Test(req, -1)
-	assert.NoError(t, err)
-	assert.Equal(t, 200, resp.StatusCode)
+	assert.Equal(t, 200, performRequest(app, "GET", "/api/categories", nil).Code)
+	assert.Equal(t, 200, performRequest(app, "GET", "/product/api/categories", nil).Code)
 
-	// List categories via context prefix
-	reqCtx := httptest.NewRequest("GET", "/product/api/categories", nil)
-	respCtx, err := app.Test(reqCtx, -1)
-	assert.NoError(t, err)
-	assert.Equal(t, 200, respCtx.StatusCode)
-
-	// Create category
 	body := []byte(`{"categoryTitle": "Electronics", "imageUrl": "http://img.png"}`)
-	reqPost := httptest.NewRequest("POST", "/api/categories", bytes.NewReader(body))
-	reqPost.Header.Set("Content-Type", "application/json")
-	respPost, err := app.Test(reqPost, -1)
-	assert.NoError(t, err)
-	assert.Equal(t, 201, respPost.StatusCode)
+	assert.Equal(t, 201, performRequest(app, "POST", "/api/categories", body).Code)
 
-	// Delete category
-	reqDel := httptest.NewRequest("DELETE", "/api/categories/1", nil)
-	respDel, err := app.Test(reqDel, -1)
-	assert.NoError(t, err)
-	assert.Equal(t, 200, respDel.StatusCode)
+	assert.Equal(t, 200, performRequest(app, "DELETE", "/api/categories/1", nil).Code)
 }
 
 func TestProductEndpoints(t *testing.T) {
 	app := setupProductApp()
 
-	// List products
-	req := httptest.NewRequest("GET", "/api/products", nil)
-	resp, err := app.Test(req, -1)
-	assert.NoError(t, err)
-	assert.Equal(t, 200, resp.StatusCode)
+	assert.Equal(t, 200, performRequest(app, "GET", "/api/products", nil).Code)
+	assert.Equal(t, 200, performRequest(app, "GET", "/product/api/products", nil).Code)
 
-	// List products via context prefix
-	reqCtx := httptest.NewRequest("GET", "/product/api/products", nil)
-	respCtx, err := app.Test(reqCtx, -1)
-	assert.NoError(t, err)
-	assert.Equal(t, 200, respCtx.StatusCode)
-
-	// Create product
 	body := []byte(`{"productTitle": "iPhone 15 Pro", "priceUnit": 999.99, "quantity": 50}`)
-	reqPost := httptest.NewRequest("POST", "/api/products", bytes.NewReader(body))
-	reqPost.Header.Set("Content-Type", "application/json")
-	respPost, err := app.Test(reqPost, -1)
-	assert.NoError(t, err)
-	assert.Equal(t, 201, respPost.StatusCode)
+	assert.Equal(t, 201, performRequest(app, "POST", "/api/products", body).Code)
 
-	// Delete product
-	reqDel := httptest.NewRequest("DELETE", "/api/products/1", nil)
-	respDel, err := app.Test(reqDel, -1)
-	assert.NoError(t, err)
-	assert.Equal(t, 200, respDel.StatusCode)
+	assert.Equal(t, 200, performRequest(app, "DELETE", "/api/products/1", nil).Code)
 }
 
 func TestFavouriteRoutes(t *testing.T) {
 	app := setupProductApp()
 
-	// List favourites
-	reqList := httptest.NewRequest("GET", "/api/favourites", nil)
-	respList, err := app.Test(reqList, -1)
-	assert.NoError(t, err)
-	assert.Equal(t, 200, respList.StatusCode)
+	assert.Equal(t, 200, performRequest(app, "GET", "/api/favourites", nil).Code)
+	assert.Equal(t, 200, performRequest(app, "GET", "/favourite/api/favourites", nil).Code)
 
-	// List favourites via context prefix
-	reqListCtx := httptest.NewRequest("GET", "/favourite/api/favourites", nil)
-	respListCtx, err := app.Test(reqListCtx, -1)
-	assert.NoError(t, err)
-	assert.Equal(t, 200, respListCtx.StatusCode)
-
-	// Save favourite
 	favBody := []byte(`{"userId": 1, "productId": 100, "likeDate": "2026-01-01T10:00:00"}`)
-	reqSave := httptest.NewRequest("POST", "/api/favourites", bytes.NewReader(favBody))
-	reqSave.Header.Set("Content-Type", "application/json")
-	respSave, err := app.Test(reqSave, -1)
-	assert.NoError(t, err)
-	assert.Equal(t, 200, respSave.StatusCode)
+	assert.Equal(t, 200, performRequest(app, "POST", "/api/favourites", favBody).Code)
 
-	// Delete favourite
-	reqDel := httptest.NewRequest("DELETE", "/api/favourites/1/100/2026-01-01T10:00:00", nil)
-	respDel, err := app.Test(reqDel, -1)
-	assert.NoError(t, err)
-	assert.Equal(t, 200, respDel.StatusCode)
+	assert.Equal(t, 200, performRequest(app, "DELETE", "/api/favourites/1/100/2026-01-01T10:00:00", nil).Code)
 }

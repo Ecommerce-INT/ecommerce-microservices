@@ -1,13 +1,15 @@
 package handler
 
 import (
+	"encoding/json"
 	"errors"
+	"net/http"
 	"strconv"
 
 	"com.ecommerce/pkg/common/response"
 	"com.ecommerce/shipping-service/internal/model"
 	"com.ecommerce/shipping-service/internal/service"
-	"github.com/gofiber/fiber/v2"
+	"github.com/go-chi/chi/v5"
 )
 
 type ShippingHandler struct {
@@ -18,137 +20,146 @@ func NewShippingHandler(svc *service.ShippingService) *ShippingHandler {
 	return &ShippingHandler{svc: svc}
 }
 
-func (h *ShippingHandler) RegisterRoutes(app *fiber.App) {
+func (h *ShippingHandler) RegisterRoutes(r chi.Router) {
 	// Health checks
-	app.Get("/actuator/health", h.HealthCheck)
-	app.Get("/shipping/actuator/health", h.HealthCheck)
+	r.Get("/actuator/health", h.HealthCheck)
+	r.Get("/shipping/actuator/health", h.HealthCheck)
 
-	// Context root: /shipping/api/shippings
-	shippingGroup := app.Group("/shipping/api/shippings")
-	h.registerEndpoints(shippingGroup)
-
-	// Fallback root: /api/shippings
-	directGroup := app.Group("/api/shippings")
-	h.registerEndpoints(directGroup)
-}
-
-func (h *ShippingHandler) registerEndpoints(r fiber.Router) {
-	r.Get("", h.FindAll)
-	r.Get("/find", h.FindByBody)
-	r.Get("/:orderId/:productId", h.FindByID)
-	r.Post("", h.Save)
-	r.Put("", h.Update)
-	r.Delete("/delete", h.DeleteByBody)
-	r.Delete("/:orderId/:productId", h.DeleteByID)
-}
-
-func (h *ShippingHandler) HealthCheck(c *fiber.Ctx) error {
-	return c.JSON(fiber.Map{
-		"status": "UP",
-		"components": fiber.Map{
-			"db": fiber.Map{"status": "UP"},
-		},
-	})
-}
-
-func (h *ShippingHandler) FindAll(c *fiber.Ctx) error {
-	items, err := h.svc.FindAll(c.Context())
-	if err != nil {
-		return response.InternalError(c, err.Error())
+	// Context root: /shipping and fallback root
+	for _, base := range []string{"/shipping/api/shippings", "/api/shippings"} {
+		h.registerEndpoints(r, base)
 	}
-	return c.JSON(model.DtoCollectionResponse[model.OrderItemDto]{
+}
+
+func (h *ShippingHandler) registerEndpoints(r chi.Router, base string) {
+	r.Get(base, h.FindAll)
+	r.Get(base+"/find", h.FindByBody)
+	r.Get(base+"/{orderId}/{productId}", h.FindByID)
+	r.Post(base, h.Save)
+	r.Put(base, h.Update)
+	r.Delete(base+"/delete", h.DeleteByBody)
+	r.Delete(base+"/{orderId}/{productId}", h.DeleteByID)
+}
+
+func (h *ShippingHandler) HealthCheck(w http.ResponseWriter, r *http.Request) {
+	response.Health(w, "db")
+}
+
+func (h *ShippingHandler) FindAll(w http.ResponseWriter, r *http.Request) {
+	items, err := h.svc.FindAll(r.Context())
+	if err != nil {
+		response.InternalError(w, r, err.Error())
+		return
+	}
+	response.WriteJSON(w, http.StatusOK, model.DtoCollectionResponse[model.OrderItemDto]{
 		Collection: items,
 	})
 }
 
-func (h *ShippingHandler) FindByID(c *fiber.Ctx) error {
-	orderId, err := strconv.Atoi(c.Params("orderId"))
+func (h *ShippingHandler) FindByID(w http.ResponseWriter, r *http.Request) {
+	orderId, err := strconv.Atoi(chi.URLParam(r, "orderId"))
 	if err != nil {
-		return response.BadRequest(c, "Invalid orderId")
+		response.BadRequest(w, r, "Invalid orderId")
+		return
 	}
-	productId, err := strconv.Atoi(c.Params("productId"))
+	productId, err := strconv.Atoi(chi.URLParam(r, "productId"))
 	if err != nil {
-		return response.BadRequest(c, "Invalid productId")
+		response.BadRequest(w, r, "Invalid productId")
+		return
 	}
 
-	item, err := h.svc.FindByID(c.Context(), orderId, productId)
-	if err != nil {
-		if errors.Is(err, service.ErrNotFound) {
-			return response.NotFound(c, err.Error())
-		}
-		return response.InternalError(c, err.Error())
-	}
-	return c.JSON(item)
-}
-
-func (h *ShippingHandler) FindByBody(c *fiber.Ctx) error {
-	var req model.OrderItemId
-	if err := c.BodyParser(&req); err != nil {
-		return response.BadRequest(c, "Invalid request body")
-	}
-
-	item, err := h.svc.FindByID(c.Context(), req.OrderId, req.ProductId)
+	item, err := h.svc.FindByID(r.Context(), orderId, productId)
 	if err != nil {
 		if errors.Is(err, service.ErrNotFound) {
-			return response.NotFound(c, err.Error())
+			response.NotFound(w, r, err.Error())
+			return
 		}
-		return response.InternalError(c, err.Error())
+		response.InternalError(w, r, err.Error())
+		return
 	}
-	return c.JSON(item)
+	response.WriteJSON(w, http.StatusOK, item)
 }
 
-func (h *ShippingHandler) Save(c *fiber.Ctx) error {
-	var req model.OrderItemDto
-	if err := c.BodyParser(&req); err != nil {
-		return response.BadRequest(c, "Invalid request body")
-	}
-
-	saved, err := h.svc.Save(c.Context(), &req)
-	if err != nil {
-		return response.InternalError(c, err.Error())
-	}
-	return c.JSON(saved)
-}
-
-func (h *ShippingHandler) Update(c *fiber.Ctx) error {
-	var req model.OrderItemDto
-	if err := c.BodyParser(&req); err != nil {
-		return response.BadRequest(c, "Invalid request body")
-	}
-
-	updated, err := h.svc.Update(c.Context(), &req)
-	if err != nil {
-		return response.InternalError(c, err.Error())
-	}
-	return c.JSON(updated)
-}
-
-func (h *ShippingHandler) DeleteByID(c *fiber.Ctx) error {
-	orderId, err := strconv.Atoi(c.Params("orderId"))
-	if err != nil {
-		return response.BadRequest(c, "Invalid orderId")
-	}
-	productId, err := strconv.Atoi(c.Params("productId"))
-	if err != nil {
-		return response.BadRequest(c, "Invalid productId")
-	}
-
-	err = h.svc.DeleteByID(c.Context(), orderId, productId)
-	if err != nil {
-		return response.InternalError(c, err.Error())
-	}
-	return c.JSON(true)
-}
-
-func (h *ShippingHandler) DeleteByBody(c *fiber.Ctx) error {
+func (h *ShippingHandler) FindByBody(w http.ResponseWriter, r *http.Request) {
 	var req model.OrderItemId
-	if err := c.BodyParser(&req); err != nil {
-		return response.BadRequest(c, "Invalid request body")
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		response.BadRequest(w, r, "Invalid request body")
+		return
 	}
 
-	err := h.svc.DeleteByID(c.Context(), req.OrderId, req.ProductId)
+	item, err := h.svc.FindByID(r.Context(), req.OrderId, req.ProductId)
 	if err != nil {
-		return response.InternalError(c, err.Error())
+		if errors.Is(err, service.ErrNotFound) {
+			response.NotFound(w, r, err.Error())
+			return
+		}
+		response.InternalError(w, r, err.Error())
+		return
 	}
-	return c.JSON(true)
+	response.WriteJSON(w, http.StatusOK, item)
+}
+
+func (h *ShippingHandler) Save(w http.ResponseWriter, r *http.Request) {
+	var req model.OrderItemDto
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		response.BadRequest(w, r, "Invalid request body")
+		return
+	}
+
+	saved, err := h.svc.Save(r.Context(), &req)
+	if err != nil {
+		response.InternalError(w, r, err.Error())
+		return
+	}
+	response.WriteJSON(w, http.StatusOK, saved)
+}
+
+func (h *ShippingHandler) Update(w http.ResponseWriter, r *http.Request) {
+	var req model.OrderItemDto
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		response.BadRequest(w, r, "Invalid request body")
+		return
+	}
+
+	updated, err := h.svc.Update(r.Context(), &req)
+	if err != nil {
+		response.InternalError(w, r, err.Error())
+		return
+	}
+	response.WriteJSON(w, http.StatusOK, updated)
+}
+
+func (h *ShippingHandler) DeleteByID(w http.ResponseWriter, r *http.Request) {
+	orderId, err := strconv.Atoi(chi.URLParam(r, "orderId"))
+	if err != nil {
+		response.BadRequest(w, r, "Invalid orderId")
+		return
+	}
+	productId, err := strconv.Atoi(chi.URLParam(r, "productId"))
+	if err != nil {
+		response.BadRequest(w, r, "Invalid productId")
+		return
+	}
+
+	err = h.svc.DeleteByID(r.Context(), orderId, productId)
+	if err != nil {
+		response.InternalError(w, r, err.Error())
+		return
+	}
+	response.WriteJSON(w, http.StatusOK, true)
+}
+
+func (h *ShippingHandler) DeleteByBody(w http.ResponseWriter, r *http.Request) {
+	var req model.OrderItemId
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		response.BadRequest(w, r, "Invalid request body")
+		return
+	}
+
+	err := h.svc.DeleteByID(r.Context(), req.OrderId, req.ProductId)
+	if err != nil {
+		response.InternalError(w, r, err.Error())
+		return
+	}
+	response.WriteJSON(w, http.StatusOK, true)
 }

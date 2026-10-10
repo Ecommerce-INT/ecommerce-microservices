@@ -1,13 +1,15 @@
 package handler
 
 import (
+	"encoding/json"
 	"errors"
+	"net/http"
 	"strconv"
 
 	"com.ecommerce/payment-service/internal/model"
 	"com.ecommerce/payment-service/internal/service"
 	"com.ecommerce/pkg/common/response"
-	"github.com/gofiber/fiber/v2"
+	"github.com/go-chi/chi/v5"
 )
 
 type PaymentHandler struct {
@@ -18,143 +20,164 @@ func NewPaymentHandler(svc *service.PaymentService) *PaymentHandler {
 	return &PaymentHandler{svc: svc}
 }
 
-func (h *PaymentHandler) RegisterRoutes(app *fiber.App) {
-	app.Get("/actuator/health", h.HealthCheck)
-	app.Get("/payment/actuator/health", h.HealthCheck)
-	app.Get("/health", h.HealthCheck)
+func (h *PaymentHandler) RegisterRoutes(r chi.Router) {
+	r.Get("/actuator/health", h.HealthCheck)
+	r.Get("/payment/actuator/health", h.HealthCheck)
+	r.Get("/health", h.HealthCheck)
 
-	h.registerEndpoints(app.Group("/api/payments"))
-	h.registerEndpoints(app.Group("/payment/api/payments"))
-}
-
-func (h *PaymentHandler) registerEndpoints(r fiber.Router) {
-	r.Get("/getOrder/:orderId", h.GetOrderDto)
-	r.Get("/all", h.FindAllPaged)
-	r.Get("/:paymentId", h.FindById)
-	r.Get("", h.FindAll)
-	r.Post("", h.Save)
-	r.Put("/:paymentId", h.UpdateById)
-	r.Put("", h.Update)
-	r.Delete("/:paymentId", h.DeleteById)
-}
-
-func (h *PaymentHandler) HealthCheck(c *fiber.Ctx) error {
-	return c.JSON(fiber.Map{
-		"status": "UP",
-		"components": fiber.Map{
-			"db": fiber.Map{"status": "UP"},
-		},
-	})
-}
-
-func (h *PaymentHandler) FindAll(c *fiber.Ctx) error {
-	payments, err := h.svc.FindAll(c.Context())
-	if err != nil {
-		return response.InternalError(c, err.Error())
+	for _, base := range []string{"/api/payments", "/payment/api/payments"} {
+		h.registerEndpoints(r, base)
 	}
-	return c.JSON(payments)
 }
 
-func (h *PaymentHandler) FindAllPaged(c *fiber.Ctx) error {
-	page, _ := strconv.Atoi(c.Query("page", "0"))
-	size, _ := strconv.Atoi(c.Query("size", "10"))
-	sortBy := c.Query("sortBy", "paymentId")
-	sortOrder := c.Query("sortOrder", "asc")
-
-	res, err := h.svc.FindAllPaged(c.Context(), page, size, sortBy, sortOrder)
-	if err != nil {
-		return response.InternalError(c, err.Error())
-	}
-	return c.JSON(res)
+func (h *PaymentHandler) registerEndpoints(r chi.Router, base string) {
+	r.Get(base+"/getOrder/{orderId}", h.GetOrderDto)
+	r.Get(base+"/all", h.FindAllPaged)
+	r.Get(base+"/{paymentId}", h.FindById)
+	r.Get(base, h.FindAll)
+	r.Post(base, h.Save)
+	r.Put(base+"/{paymentId}", h.UpdateById)
+	r.Put(base, h.Update)
+	r.Delete(base+"/{paymentId}", h.DeleteById)
 }
 
-func (h *PaymentHandler) FindById(c *fiber.Ctx) error {
-	id, err := strconv.Atoi(c.Params("paymentId"))
+func (h *PaymentHandler) HealthCheck(w http.ResponseWriter, r *http.Request) {
+	response.Health(w, "db")
+}
+
+func queryDefault(r *http.Request, key, fallback string) string {
+	if value := r.URL.Query().Get(key); value != "" {
+		return value
+	}
+	return fallback
+}
+
+func (h *PaymentHandler) FindAll(w http.ResponseWriter, r *http.Request) {
+	payments, err := h.svc.FindAll(r.Context())
 	if err != nil {
-		return response.BadRequest(c, "Invalid paymentId")
+		response.InternalError(w, r, err.Error())
+		return
+	}
+	response.WriteJSON(w, http.StatusOK, payments)
+}
+
+func (h *PaymentHandler) FindAllPaged(w http.ResponseWriter, r *http.Request) {
+	page, _ := strconv.Atoi(queryDefault(r, "page", "0"))
+	size, _ := strconv.Atoi(queryDefault(r, "size", "10"))
+	sortBy := queryDefault(r, "sortBy", "paymentId")
+	sortOrder := queryDefault(r, "sortOrder", "asc")
+
+	res, err := h.svc.FindAllPaged(r.Context(), page, size, sortBy, sortOrder)
+	if err != nil {
+		response.InternalError(w, r, err.Error())
+		return
+	}
+	response.WriteJSON(w, http.StatusOK, res)
+}
+
+func (h *PaymentHandler) FindById(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(chi.URLParam(r, "paymentId"))
+	if err != nil {
+		response.BadRequest(w, r, "Invalid paymentId")
+		return
 	}
 
-	payment, err := h.svc.FindById(c.Context(), id)
+	payment, err := h.svc.FindById(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, service.ErrPaymentNotFound) {
-			return response.NotFound(c, err.Error())
+			response.NotFound(w, r, err.Error())
+			return
 		}
-		return response.InternalError(c, err.Error())
+		response.InternalError(w, r, err.Error())
+		return
 	}
-	return c.JSON(payment)
+	response.WriteJSON(w, http.StatusOK, payment)
 }
 
-func (h *PaymentHandler) GetOrderDto(c *fiber.Ctx) error {
-	id, err := strconv.Atoi(c.Params("orderId"))
+func (h *PaymentHandler) GetOrderDto(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(chi.URLParam(r, "orderId"))
 	if err != nil {
-		return response.BadRequest(c, "Invalid orderId")
+		response.BadRequest(w, r, "Invalid orderId")
+		return
 	}
 
-	dto := h.svc.GetOrderDto(c.Context(), id)
-	return c.JSON(dto)
+	dto := h.svc.GetOrderDto(r.Context(), id)
+	response.WriteJSON(w, http.StatusOK, dto)
 }
 
-func (h *PaymentHandler) Save(c *fiber.Ctx) error {
+func (h *PaymentHandler) Save(w http.ResponseWriter, r *http.Request) {
 	var req model.PaymentDto
-	if err := c.BodyParser(&req); err != nil {
-		return response.BadRequest(c, "Invalid request body")
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		response.BadRequest(w, r, "Invalid request body")
+		return
 	}
 
-	saved, err := h.svc.Save(c.Context(), req)
+	saved, err := h.svc.Save(r.Context(), req)
 	if err != nil {
 		if errors.Is(err, service.ErrOrderAlreadyPaid) {
-			return response.NotFound(c, err.Error())
+			response.NotFound(w, r, err.Error())
+			return
 		}
-		return response.InternalError(c, err.Error())
+		response.InternalError(w, r, err.Error())
+		return
 	}
-	return c.JSON(saved)
+	response.WriteJSON(w, http.StatusOK, saved)
 }
 
-func (h *PaymentHandler) Update(c *fiber.Ctx) error {
+func (h *PaymentHandler) Update(w http.ResponseWriter, r *http.Request) {
 	var req model.PaymentDto
-	if err := c.BodyParser(&req); err != nil {
-		return response.BadRequest(c, "Invalid request body")
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		response.BadRequest(w, r, "Invalid request body")
+		return
 	}
 
-	updated, err := h.svc.Update(c.Context(), req)
+	updated, err := h.svc.Update(r.Context(), req)
 	if err != nil {
 		if errors.Is(err, service.ErrPaymentNotFound) {
-			return response.NotFound(c, err.Error())
+			response.NotFound(w, r, err.Error())
+			return
 		}
-		return response.InternalError(c, err.Error())
+		response.InternalError(w, r, err.Error())
+		return
 	}
-	return c.JSON(updated)
+	response.WriteJSON(w, http.StatusOK, updated)
 }
 
-func (h *PaymentHandler) UpdateById(c *fiber.Ctx) error {
-	id, err := strconv.Atoi(c.Params("paymentId"))
+func (h *PaymentHandler) UpdateById(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(chi.URLParam(r, "paymentId"))
 	if err != nil {
-		return response.BadRequest(c, "Invalid paymentId")
+		response.BadRequest(w, r, "Invalid paymentId")
+		return
 	}
 
 	var req model.PaymentDto
-	if err := c.BodyParser(&req); err != nil {
-		return response.BadRequest(c, "Invalid request body")
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		response.BadRequest(w, r, "Invalid request body")
+		return
 	}
 
-	updated, err := h.svc.UpdateById(c.Context(), id, req)
+	updated, err := h.svc.UpdateById(r.Context(), id, req)
 	if err != nil {
 		if errors.Is(err, service.ErrPaymentNotFound) {
-			return response.NotFound(c, err.Error())
+			response.NotFound(w, r, err.Error())
+			return
 		}
-		return response.InternalError(c, err.Error())
+		response.InternalError(w, r, err.Error())
+		return
 	}
-	return c.JSON(updated)
+	response.WriteJSON(w, http.StatusOK, updated)
 }
 
-func (h *PaymentHandler) DeleteById(c *fiber.Ctx) error {
-	id, err := strconv.Atoi(c.Params("paymentId"))
+func (h *PaymentHandler) DeleteById(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(chi.URLParam(r, "paymentId"))
 	if err != nil {
-		return response.BadRequest(c, "Invalid paymentId")
+		response.BadRequest(w, r, "Invalid paymentId")
+		return
 	}
 
-	if err := h.svc.DeleteById(c.Context(), id); err != nil {
-		return response.InternalError(c, err.Error())
+	if err := h.svc.DeleteById(r.Context(), id); err != nil {
+		response.InternalError(w, r, err.Error())
+		return
 	}
-	return c.JSON(true)
+	response.WriteJSON(w, http.StatusOK, true)
 }

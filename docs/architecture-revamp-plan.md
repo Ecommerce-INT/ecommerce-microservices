@@ -9,7 +9,7 @@ This document outlines the architectural revamp of the **ecommerce-microservices
 | **Frontend Monorepo** | Next.js 16 (React 19), Zustand, TanStack Query, Axios, pnpm | **SvelteKit 5 (Runes)**, Tailwind CSS 4, **Bun Workspaces** | ~70% smaller client bundles, true SSR `load`/Form Actions, `HttpOnly` cookie auth |
 | **API Gateway & K8s Edge** | NGINX Ingress (`ingress-nginx`) + Apache APISIX 3.9 | **Apache APISIX 3.19 + K8s Gateway API v1 (`HTTPRoute`)** | Drops EOL `ingress-nginx` & double-proxy hop; validates `better-auth` JWKS |
 | **Authentication** | Keycloak 26 + Spring `auth-service` | **Better-Auth** (`auth-service` on Bun) | Drops 1 GB Keycloak JVM; unified OAuth/RBAC + stateless OIDC/JWKS tokens |
-| **Core Backend** | 13x Spring Boot 3.3.5 (Java 21) | **7x Go Services + 4x Bun/TS Services** | ~90% backend RAM reduction (~250 MB total vs ~6–8 GB), `<50ms` cold starts |
+| **Core Backend** | 13x Spring Boot 3.3.5 (Java 21) | **7x Go Services (`chi/v5` + `bob`/`pgx/v5`) + 4x Bun/TS Services** | ~90% backend RAM reduction (~250 MB total vs ~6–8 GB), `<50ms` cold starts |
 | **Messaging & RPC** | Apache Kafka 3.9 (KRaft) + Spring `RestClient` | **NATS 2.10+ (JetStream)** | 18 MB binary (~20 MB RAM) providing **both** persistent event streams & sync Request-Reply RPC |
 | **Search & AI Engine** | Elasticsearch 8.15 | **OpenSearch 3.9** | 100% Apache 2.0; Lucene 10 + 1/2/4-bit & `bf16` quantization + Neural Sparse ANN + gRPC + Agent-v2 RAG |
 | **Database & Storage** | PostgreSQL 16 (`StatefulSet`), Redis 7.4, RustFS (S3) | **PostgreSQL 18 (CNPG)**, **Valkey 9.1**, **RustFS (S3)** | PG 18 `uuidv7()` + `io_uring`, CNPG `Database` CRDs + PgBouncer, Valkey 9.1 DB-level ACLs & BSD-3 open source |
@@ -46,6 +46,12 @@ This document outlines the architectural revamp of the **ecommerce-microservices
 * **Why Go + Bun/TypeScript instead of 13 Spring Boot JVMs:**
   * **Go** excels at high-concurrency, lock-sensitive, transactional core domains (`product`, `search`, `inventory`, `promotion`, `order`, `payment`, `shipping`), compiling to static ~15–25 MB binaries with predictable sub-millisecond latency.
   * **Bun/TypeScript** excels at identity (`better-auth`), S3 asset pipelines (native `Bun.S3Client`), and event-driven user engagement (`notification`, `rating`), allowing shared TypeScript schemas with the frontend.
+* **Why `go-chi/chi/v5` instead of `gofiber/fiber` (`fasthttp`) for Go HTTP Routing:**
+  * **100% `net/http` & `context.Context` compatibility:** Propagates request cancellation, deadlines, and OpenTelemetry trace spans directly into `pgx/v5`, `nats.go`, and `opensearch-go` without `fasthttp` adapter friction.
+  * **Memory safety & zero external dependencies:** Eliminates `fasthttp` buffer-reuse data hazards (`utils.CopyString` workarounds when passing values to structs/goroutines), supports HTTP/2 natively, and adds zero transitive dependencies to `go.mod`.
+* **Why `stephenafamo/bob` (`v0.50.0`) on top of `jackc/pgx/v5` (`v5.11.0`) instead of raw `pgx` SQL strings:**
+  * **Complements `pgx/v5` rather than replacing it:** Wraps `*pgxpool.Pool` directly via `bob/drivers/pgx`, preserving `pgx`'s binary wire protocol and connection pooling while eliminating repetitive manual `rows.Scan` and `COALESCE` boilerplate via `bob.One` / `bob.All`.
+  * **Safe dynamic queries & $N+1$ prevention:** Replaces fragile `fmt.Sprintf` dynamic sorting/filtering across `order`, `payment`, `product`, and `promotion` services with composable PostgreSQL query mods (`dialect/psql`), prevents $N+1$ subqueries inside open `rows.Next()` cursors that risk `pgxpool` connection starvation (`Preload` / `ThenLoad`), and retains raw SQL expressions (`psql.Raw`) for PostgreSQL 18 `RETURNING OLD, NEW` atomic state transitions.
 * **Why SvelteKit 5 (on Bun) instead of Next.js 16:**
   * Replaces client-side Axios + React Query + Zustand waterfalls with SvelteKit Server `load` functions, Form Actions, and Svelte 5 Runes, while securing auth tokens in `HttpOnly` cookies.
 * **Why Better-Auth instead of Keycloak 26:**

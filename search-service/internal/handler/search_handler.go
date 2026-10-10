@@ -1,11 +1,12 @@
 package handler
 
 import (
+	"net/http"
 	"strconv"
 
 	"com.ecommerce/pkg/common/response"
 	"com.ecommerce/search-service/internal/service"
-	"github.com/gofiber/fiber/v2"
+	"github.com/go-chi/chi/v5"
 )
 
 type SearchHandler struct {
@@ -16,68 +17,78 @@ func NewSearchHandler(svc *service.SearchService) *SearchHandler {
 	return &SearchHandler{svc: svc}
 }
 
-func (h *SearchHandler) RegisterRoutes(app *fiber.App) {
-	app.Get("/actuator/health", h.HealthCheck)
-	app.Get("/search/actuator/health", h.HealthCheck)
+func (h *SearchHandler) RegisterRoutes(r chi.Router) {
+	r.Get("/actuator/health", h.HealthCheck)
+	r.Get("/search/actuator/health", h.HealthCheck)
 
-	// Context root: /search
-	searchGroup := app.Group("/search")
-	h.registerEndpoints(searchGroup)
-
-	// Direct root
-	h.registerEndpoints(app)
+	// Context root: /search and direct root
+	for _, prefix := range []string{"/search", ""} {
+		h.registerEndpoints(r, prefix)
+	}
 }
 
-func (h *SearchHandler) registerEndpoints(r fiber.Router) {
-	r.Get("/storefront/catalog-search", h.CatalogSearch)
-	r.Get("/storefront/search_suggest", h.SearchSuggest)
+func (h *SearchHandler) registerEndpoints(r chi.Router, prefix string) {
+	r.Get(prefix+"/storefront/catalog-search", h.CatalogSearch)
+	r.Get(prefix+"/storefront/search_suggest", h.SearchSuggest)
 }
 
-func (h *SearchHandler) HealthCheck(c *fiber.Ctx) error {
-	return c.JSON(fiber.Map{
-		"status": "UP",
-		"components": fiber.Map{
-			"elasticsearch": fiber.Map{"status": "UP"},
-		},
-	})
+func (h *SearchHandler) HealthCheck(w http.ResponseWriter, r *http.Request) {
+	response.Health(w, "elasticsearch")
 }
 
-func (h *SearchHandler) CatalogSearch(c *fiber.Ctx) error {
-	keyword := c.Query("keyword", "")
-	page := c.QueryInt("page", 0)
-	size := c.QueryInt("size", 12)
-	brand := c.Query("brand", "")
-	category := c.Query("category", "")
-	attribute := c.Query("attribute", "")
-	sortType := c.Query("sortType", "DEFAULT")
+func intQueryDefault(value string, fallback int) int {
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+func (h *SearchHandler) CatalogSearch(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	keyword := q.Get("keyword")
+	page := intQueryDefault(q.Get("page"), 0)
+	size := intQueryDefault(q.Get("size"), 12)
+	brand := q.Get("brand")
+	category := q.Get("category")
+	attribute := q.Get("attribute")
+	sortType := q.Get("sortType")
+	if sortType == "" {
+		sortType = "DEFAULT"
+	}
 
 	var minPrice *float64
-	if minP := c.Query("minPrice"); minP != "" {
+	if minP := q.Get("minPrice"); minP != "" {
 		if val, err := strconv.ParseFloat(minP, 64); err == nil {
 			minPrice = &val
 		}
 	}
 
 	var maxPrice *float64
-	if maxP := c.Query("maxPrice"); maxP != "" {
+	if maxP := q.Get("maxPrice"); maxP != "" {
 		if val, err := strconv.ParseFloat(maxP, 64); err == nil {
 			maxPrice = &val
 		}
 	}
 
-	res, err := h.svc.FindProductAdvance(c.Context(), keyword, page, size, brand, category, attribute, minPrice, maxPrice, sortType)
+	res, err := h.svc.FindProductAdvance(r.Context(), keyword, page, size, brand, category, attribute, minPrice, maxPrice, sortType)
 	if err != nil {
-		return response.InternalError(c, err.Error())
+		response.InternalError(w, r, err.Error())
+		return
 	}
 
-	return c.JSON(res)
+	response.WriteJSON(w, http.StatusOK, res)
 }
 
-func (h *SearchHandler) SearchSuggest(c *fiber.Ctx) error {
-	keyword := c.Query("keyword", "")
-	res, err := h.svc.AutoComplete(c.Context(), keyword)
+func (h *SearchHandler) SearchSuggest(w http.ResponseWriter, r *http.Request) {
+	keyword := r.URL.Query().Get("keyword")
+	res, err := h.svc.AutoComplete(r.Context(), keyword)
 	if err != nil {
-		return response.InternalError(c, err.Error())
+		response.InternalError(w, r, err.Error())
+		return
 	}
-	return c.JSON(res)
+	response.WriteJSON(w, http.StatusOK, res)
 }

@@ -1,6 +1,6 @@
 package response
 
-import "github.com/gofiber/fiber/v2"
+import "net/http"
 
 // ErrorVm represents standard RFC7807/Spring style error view model
 type ErrorVm struct {
@@ -9,24 +9,24 @@ type ErrorVm struct {
 	Detail     string `json:"detail"`
 }
 
-func NotFound(c *fiber.Ctx, detail string) error {
-	return c.Status(fiber.StatusNotFound).JSON(ErrorVm{
+func NotFound(w http.ResponseWriter, r *http.Request, detail string) {
+	WriteJSON(w, http.StatusNotFound, ErrorVm{
 		StatusCode: "404",
 		Title:      "Not found",
 		Detail:     detail,
 	})
 }
 
-func BadRequest(c *fiber.Ctx, detail string) error {
-	return c.Status(fiber.StatusBadRequest).JSON(ErrorVm{
+func BadRequest(w http.ResponseWriter, r *http.Request, detail string) {
+	WriteJSON(w, http.StatusBadRequest, ErrorVm{
 		StatusCode: "400",
 		Title:      "Bad request",
 		Detail:     detail,
 	})
 }
 
-func InternalError(c *fiber.Ctx, detail string) error {
-	return c.Status(fiber.StatusInternalServerError).JSON(ErrorVm{
+func InternalError(w http.ResponseWriter, r *http.Request, detail string) {
+	WriteJSON(w, http.StatusInternalServerError, ErrorVm{
 		StatusCode: "500",
 		Title:      "Internal server error",
 		Detail:     detail,

@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"io"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 
@@ -10,11 +12,11 @@ import (
 	"com.ecommerce/auth-service/internal/model"
 	"com.ecommerce/auth-service/internal/repository"
 	"com.ecommerce/auth-service/internal/service"
-	"github.com/gofiber/fiber/v2"
+	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
 )
 
-func setupTestApp() *fiber.App {
+func setupTestApp() http.Handler {
 	repo := repository.NewUserRepository(nil)
 	kcCfg := service.KeycloakConfig{
 		ServerURL:               "http://localhost:8080",
@@ -28,62 +30,59 @@ func setupTestApp() *fiber.App {
 	userSvc := service.NewUserService(repo, kcClient)
 	h := handler.NewAuthHandler(userSvc, kcClient, ssoStore, kcCfg.DefaultFrontendRedirect)
 
-	app := fiber.New()
-	h.RegisterRoutes(app)
-	return app
+	r := chi.NewRouter()
+	h.RegisterRoutes(r)
+	return r
+}
+
+func performRequest(app http.Handler, method, target string, body []byte) *httptest.ResponseRecorder {
+	var reader io.Reader
+	if body != nil {
+		reader = bytes.NewReader(body)
+	}
+	req := httptest.NewRequest(method, target, reader)
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	rec := httptest.NewRecorder()
+	app.ServeHTTP(rec, req)
+	return rec
 }
 
 func TestHealthCheck(t *testing.T) {
 	app := setupTestApp()
 
-	req := httptest.NewRequest("GET", "/actuator/health", nil)
-	resp, err := app.Test(req)
-	assert.NoError(t, err)
-	assert.Equal(t, 200, resp.StatusCode)
-
-	reqAuth := httptest.NewRequest("GET", "/auth/actuator/health", nil)
-	respAuth, err := app.Test(reqAuth)
-	assert.NoError(t, err)
-	assert.Equal(t, 200, respAuth.StatusCode)
+	assert.Equal(t, 200, performRequest(app, "GET", "/actuator/health", nil).Code)
+	assert.Equal(t, 200, performRequest(app, "GET", "/auth/actuator/health", nil).Code)
 }
 
 func TestSSOFlow(t *testing.T) {
 	app := setupTestApp()
 
 	// 1. Login redirects to Keycloak
-	reqLogin := httptest.NewRequest("GET", "/api/v1/auth/login", nil)
-	respLogin, err := app.Test(reqLogin)
-	assert.NoError(t, err)
-	assert.Equal(t, 302, respLogin.StatusCode)
-	loc := respLogin.Header.Get("Location")
+	respLogin := performRequest(app, "GET", "/api/v1/auth/login", nil)
+	assert.Equal(t, 302, respLogin.Code)
+	loc := respLogin.Header().Get("Location")
 	assert.Contains(t, loc, "protocol/openid-connect/auth")
 	assert.Contains(t, loc, "response_type=code")
 
 	// 2. Callback handles code and redirects with ticket
-	reqCallback := httptest.NewRequest("GET", "/api/v1/auth/callback?code=mock-code&state=mock-state", nil)
-	respCallback, err := app.Test(reqCallback)
-	assert.NoError(t, err)
-	assert.Equal(t, 302, respCallback.StatusCode)
-	locCallback := respCallback.Header.Get("Location")
+	respCallback := performRequest(app, "GET", "/api/v1/auth/callback?code=mock-code&state=mock-state", nil)
+	assert.Equal(t, 302, respCallback.Code)
+	locCallback := respCallback.Header().Get("Location")
 	assert.Contains(t, locCallback, "ticket=")
 
 	// 3. User change password endpoint
-	reqPwd := httptest.NewRequest("PUT", "/api/v1/users/me/password", bytes.NewReader([]byte("{}")))
-	reqPwd.Header.Set("Content-Type", "application/json")
-	respPwd, err := app.Test(reqPwd)
-	assert.NoError(t, err)
-	assert.Equal(t, 200, respPwd.StatusCode)
+	respPwd := performRequest(app, "PUT", "/api/v1/users/me/password", []byte("{}"))
+	assert.Equal(t, 200, respPwd.Code)
 }
 
 func TestSignupValidation(t *testing.T) {
 	app := setupTestApp()
 
 	// Empty body should return validation error
-	req := httptest.NewRequest("POST", "/api/v1/auth/signup", bytes.NewReader([]byte("{}")))
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := app.Test(req)
-	assert.NoError(t, err)
-	assert.Equal(t, 400, resp.StatusCode)
+	resp := performRequest(app, "POST", "/api/v1/auth/signup", []byte("{}"))
+	assert.Equal(t, 400, resp.Code)
 
 	var res map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&res)

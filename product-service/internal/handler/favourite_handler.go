@@ -1,13 +1,14 @@
 package handler
 
 import (
-	"net/url"
+	"encoding/json"
+	"net/http"
 	"strconv"
 
 	"com.ecommerce/pkg/common/response"
 	"com.ecommerce/product-service/internal/model"
 	"com.ecommerce/product-service/internal/service"
-	"github.com/gofiber/fiber/v2"
+	"github.com/go-chi/chi/v5"
 )
 
 type FavouriteHandler struct {
@@ -18,139 +19,142 @@ func NewFavouriteHandler(svc *service.FavouriteService) *FavouriteHandler {
 	return &FavouriteHandler{svc: svc}
 }
 
-func (h *FavouriteHandler) RegisterRoutes(app *fiber.App) {
+func (h *FavouriteHandler) RegisterRoutes(r chi.Router) {
 	// Health check aliases for favourite service compatibility
-	app.Get("/favourite/actuator/health", h.HealthCheck)
+	r.Get("/favourite/actuator/health", h.HealthCheck)
 
-	// Context root: /favourite/api/favourites
-	favGroup := app.Group("/favourite/api/favourites")
-	h.registerEndpoints(favGroup)
-
-	// Context root: /product/api/favourites
-	prodFavGroup := app.Group("/product/api/favourites")
-	h.registerEndpoints(prodFavGroup)
-
-	// Direct root: /api/favourites
-	directGroup := app.Group("/api/favourites")
-	h.registerEndpoints(directGroup)
-}
-
-func (h *FavouriteHandler) registerEndpoints(r fiber.Router) {
-	r.Get("", h.FindAll)
-	r.Get("/find", h.Find)
-	r.Get("/:userId/:productId/:likeDate", h.FindByID)
-	r.Post("", h.Save)
-	r.Put("", h.Update)
-	r.Delete("/delete", h.Delete)
-	r.Delete("/:userId/:productId/:likeDate", h.DeleteByID)
-}
-
-func (h *FavouriteHandler) HealthCheck(c *fiber.Ctx) error {
-	return c.JSON(fiber.Map{
-		"status": "UP",
-		"components": fiber.Map{
-			"db": fiber.Map{"status": "UP"},
-		},
-	})
-}
-
-func (h *FavouriteHandler) FindAll(c *fiber.Ctx) error {
-	list, err := h.svc.FindAll(c.Context())
-	if err != nil {
-		return response.InternalError(c, err.Error())
+	// Context roots: /favourite/api/favourites, /product/api/favourites and direct root
+	for _, base := range []string{"/favourite/api/favourites", "/product/api/favourites", "/api/favourites"} {
+		h.registerEndpoints(r, base)
 	}
-	return c.JSON(model.FavouriteCollectionResponse{Collection: list})
 }
 
-func (h *FavouriteHandler) Find(c *fiber.Ctx) error {
+func (h *FavouriteHandler) registerEndpoints(r chi.Router, base string) {
+	r.Get(base, h.FindAll)
+	r.Get(base+"/find", h.Find)
+	r.Get(base+"/{userId}/{productId}/{likeDate}", h.FindByID)
+	r.Post(base, h.Save)
+	r.Put(base, h.Update)
+	r.Delete(base+"/delete", h.Delete)
+	r.Delete(base+"/{userId}/{productId}/{likeDate}", h.DeleteByID)
+}
+
+func (h *FavouriteHandler) HealthCheck(w http.ResponseWriter, r *http.Request) {
+	response.Health(w, "db")
+}
+
+func (h *FavouriteHandler) FindAll(w http.ResponseWriter, r *http.Request) {
+	list, err := h.svc.FindAll(r.Context())
+	if err != nil {
+		response.InternalError(w, r, err.Error())
+		return
+	}
+	response.WriteJSON(w, http.StatusOK, model.FavouriteCollectionResponse{Collection: list})
+}
+
+func (h *FavouriteHandler) Find(w http.ResponseWriter, r *http.Request) {
 	var req model.FavouriteID
-	if err := c.BodyParser(&req); err != nil {
-		return response.BadRequest(c, "Invalid request payload")
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		response.BadRequest(w, r, "Invalid request payload")
+		return
 	}
 
-	fav, err := h.svc.FindByID(c.Context(), req)
+	fav, err := h.svc.FindByID(r.Context(), req)
 	if err != nil {
-		return response.InternalError(c, err.Error())
+		response.InternalError(w, r, err.Error())
+		return
 	}
 	if fav == nil {
-		return response.NotFound(c, "Favourite not found")
+		response.NotFound(w, r, "Favourite not found")
+		return
 	}
-	return c.JSON(fav)
+	response.WriteJSON(w, http.StatusOK, fav)
 }
 
-func (h *FavouriteHandler) FindByID(c *fiber.Ctx) error {
-	userID, err := strconv.Atoi(c.Params("userId"))
+func (h *FavouriteHandler) FindByID(w http.ResponseWriter, r *http.Request) {
+	userID, err := strconv.Atoi(chi.URLParam(r, "userId"))
 	if err != nil {
-		return response.BadRequest(c, "Invalid userId")
+		response.BadRequest(w, r, "Invalid userId")
+		return
 	}
-	productID, err := strconv.Atoi(c.Params("productId"))
+	productID, err := strconv.Atoi(chi.URLParam(r, "productId"))
 	if err != nil {
-		return response.BadRequest(c, "Invalid productId")
+		response.BadRequest(w, r, "Invalid productId")
+		return
 	}
-	likeDate, _ := url.QueryUnescape(c.Params("likeDate"))
+	likeDate := chi.URLParam(r, "likeDate")
 
-	fav, err := h.svc.FindByID(c.Context(), model.FavouriteID{
+	fav, err := h.svc.FindByID(r.Context(), model.FavouriteID{
 		UserID:    userID,
 		ProductID: productID,
 		LikeDate:  likeDate,
 	})
 	if err != nil {
-		return response.InternalError(c, err.Error())
+		response.InternalError(w, r, err.Error())
+		return
 	}
 	if fav == nil {
-		return response.NotFound(c, "Favourite not found")
+		response.NotFound(w, r, "Favourite not found")
+		return
 	}
-	return c.JSON(fav)
+	response.WriteJSON(w, http.StatusOK, fav)
 }
 
-func (h *FavouriteHandler) Save(c *fiber.Ctx) error {
+func (h *FavouriteHandler) Save(w http.ResponseWriter, r *http.Request) {
 	var req model.FavouriteDto
-	if err := c.BodyParser(&req); err != nil {
-		return response.BadRequest(c, "Invalid request payload")
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		response.BadRequest(w, r, "Invalid request payload")
+		return
 	}
 
-	saved, err := h.svc.Save(c.Context(), req)
+	saved, err := h.svc.Save(r.Context(), req)
 	if err != nil {
-		return response.InternalError(c, err.Error())
+		response.InternalError(w, r, err.Error())
+		return
 	}
-	return c.JSON(saved)
+	response.WriteJSON(w, http.StatusOK, saved)
 }
 
-func (h *FavouriteHandler) Update(c *fiber.Ctx) error {
-	return h.Save(c)
+func (h *FavouriteHandler) Update(w http.ResponseWriter, r *http.Request) {
+	h.Save(w, r)
 }
 
-func (h *FavouriteHandler) Delete(c *fiber.Ctx) error {
+func (h *FavouriteHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	var req model.FavouriteID
-	if err := c.BodyParser(&req); err != nil {
-		return response.BadRequest(c, "Invalid request payload")
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		response.BadRequest(w, r, "Invalid request payload")
+		return
 	}
 
-	ok, err := h.svc.DeleteByID(c.Context(), req)
+	ok, err := h.svc.DeleteByID(r.Context(), req)
 	if err != nil {
-		return response.InternalError(c, err.Error())
+		response.InternalError(w, r, err.Error())
+		return
 	}
-	return c.JSON(ok)
+	response.WriteJSON(w, http.StatusOK, ok)
 }
 
-func (h *FavouriteHandler) DeleteByID(c *fiber.Ctx) error {
-	userID, err := strconv.Atoi(c.Params("userId"))
+func (h *FavouriteHandler) DeleteByID(w http.ResponseWriter, r *http.Request) {
+	userID, err := strconv.Atoi(chi.URLParam(r, "userId"))
 	if err != nil {
-		return response.BadRequest(c, "Invalid userId")
+		response.BadRequest(w, r, "Invalid userId")
+		return
 	}
-	productID, err := strconv.Atoi(c.Params("productId"))
+	productID, err := strconv.Atoi(chi.URLParam(r, "productId"))
 	if err != nil {
-		return response.BadRequest(c, "Invalid productId")
+		response.BadRequest(w, r, "Invalid productId")
+		return
 	}
-	likeDate, _ := url.QueryUnescape(c.Params("likeDate"))
+	likeDate := chi.URLParam(r, "likeDate")
 
-	ok, err := h.svc.DeleteByID(c.Context(), model.FavouriteID{
+	ok, err := h.svc.DeleteByID(r.Context(), model.FavouriteID{
 		UserID:    userID,
 		ProductID: productID,
 		LikeDate:  likeDate,
 	})
 	if err != nil {
-		return response.InternalError(c, err.Error())
+		response.InternalError(w, r, err.Error())
+		return
 	}
-	return c.JSON(ok)
+	response.WriteJSON(w, http.StatusOK, ok)
 }
