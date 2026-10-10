@@ -95,10 +95,13 @@ function Show-Help {
     Write-Host "    bun-test               Run Bun tests (4 services)"
     Write-Host "    bun-dev <service>      Run one Bun service in watch mode"
     Write-Host ""
-    Write-Host "  Frontend (pnpm + Turborepo)"
-    Write-Host "    web-install            Install frontend workspace dependencies"
-    Write-Host "    web-dev                Start both Next.js apps (web :3000, admin :3001)"
+    Write-Host "  Frontend (Bun workspace - SvelteKit 5)"
+    Write-Host "    web-install            Install frontend workspace dependencies (Bun)"
+    Write-Host "    web-dev                Start both SvelteKit apps (web :3000, admin :3001)"
     Write-Host "    web-build              Production build of both apps"
+    Write-Host "    web-check              Type-check both apps and packages"
+    Write-Host "    web-lint               Prettier + ESLint across the workspace"
+    Write-Host "    web-test               Run frontend unit tests (bun test)"
     Write-Host ""
     Write-Host "  Docker Compose"
     Write-Host "    up                     Build & start the full stack"
@@ -239,9 +242,12 @@ switch ($Task.ToLowerInvariant()) {
     "bun-install"    { Invoke-BunInstall }
     "bun-test"       { Invoke-BunTest }
     "bun-dev"        { Invoke-BunDev }
-    "web-install"    { Push-Location frontend; pnpm install; $code = $LASTEXITCODE; Pop-Location; exit $code }
-    "web-dev"        { Push-Location frontend; pnpm dev;     $code = $LASTEXITCODE; Pop-Location; exit $code }
-    "web-build"      { Push-Location frontend; pnpm build;   $code = $LASTEXITCODE; Pop-Location; exit $code }
+    "web-install"    { Push-Location frontend; bun install;      $code = $LASTEXITCODE; Pop-Location; exit $code }
+    "web-dev"        { Push-Location frontend; bun run dev;      $code = $LASTEXITCODE; Pop-Location; exit $code }
+    "web-build"      { Push-Location frontend; bun run build;    $code = $LASTEXITCODE; Pop-Location; exit $code }
+    "web-check"      { Push-Location frontend; bun run check;    $code = $LASTEXITCODE; Pop-Location; exit $code }
+    "web-lint"       { Push-Location frontend; bun run lint;     $code = $LASTEXITCODE; Pop-Location; exit $code }
+    "web-test"       { Push-Location frontend; bun test;         $code = $LASTEXITCODE; Pop-Location; exit $code }
     "up"             { docker compose up -d --build; Assert-LastExit "docker compose up" }
     "infra-up"       { docker compose up -d $infraServices; Assert-LastExit "docker compose up (infra)" }
     "down"           { docker compose down; Assert-LastExit "docker compose down" }

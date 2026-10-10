@@ -88,19 +88,28 @@ bun-dev: ## Run one Bun service in watch mode (SVC=rating-service)
 	cd $(SVC) && bun install && bun run dev
 
 # =============================================================================
-# Frontend (pnpm + Turborepo)
+# Frontend (Bun workspace — SvelteKit 5)
 # =============================================================================
 
-.PHONY: web-install web-dev web-build
+.PHONY: web-install web-dev web-build web-check web-lint web-test
 
-web-install: ## Install frontend workspace dependencies (pnpm)
-	cd frontend && pnpm install
+web-install: ## Install frontend workspace dependencies (Bun)
+	cd frontend && bun install
 
-web-dev: ## Start both Next.js apps (web :3000, admin :3001)
-	cd frontend && pnpm dev
+web-dev: ## Start both SvelteKit apps (web :3000, admin :3001)
+	cd frontend && bun run dev
 
-web-build: ## Production build of both Next.js apps
-	cd frontend && pnpm build
+web-build: ## Production build of both SvelteKit apps
+	cd frontend && bun run build
+
+web-check: ## Type-check both apps and packages (svelte-check + tsc)
+	cd frontend && bun run check
+
+web-lint: ## Prettier + ESLint across the frontend workspace
+	cd frontend && bun run lint
+
+web-test: ## Run frontend unit tests (bun test)
+	cd frontend && bun test
 
 # =============================================================================
 # Testing
