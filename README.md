@@ -86,7 +86,7 @@ Browser traffic reaches the gateway at `/api/*` and `/storefront/*`; APISIX rewr
 | **API gateway** | Apache APISIX 3.15 (`:9080`) |
 | **Frontend** | Next.js 16, React 19, Tailwind CSS 4, TanStack Query, next-intl, Turborepo + pnpm |
 | **Local orchestration** | Docker Compose (infra + 11 services + frontend) |
-| **Cluster** | k3d / k3s with the manifests under `k8s/` |
+| **Cluster** | k3d / k3s on Docker or Podman (auto-detected), manifests under `k8s/` |
 
 ## 🧩 Services
 
@@ -151,7 +151,7 @@ ecommerce-microservices/
 | [Node.js](https://nodejs.org/) + pnpm 10 | Node 20+ | Next.js frontends (`corepack enable` provides pnpm) |
 | GNU make | 3.81+ | Task runner on Linux / macOS / WSL / Git Bash |
 | PowerShell 5.1+ | built in | Task runner on Windows (`scripts/dev.ps1`) |
-| k3d + kubectl | latest | Optional — Kubernetes route |
+| k3d + kubectl | latest | Optional — k3d cluster (`start-ecommerce.*`); uses Docker Desktop or Podman |
 
 ## 🚀 Quick Start
 
@@ -190,6 +190,27 @@ make web-dev                       # both apps: web :3000, admin :3001
 
 The browser calls the gateway directly. Point `NEXT_PUBLIC_API_URL` (in `frontend/apps/web/.env` / `apps/admin/.env`) at whatever backend is running — `http://api.ecommerce.local` for the k3d cluster, or your local gateway URL.
 
+### 4. Kubernetes (k3d — optional)
+
+One command creates the k3d cluster and applies every manifest (infra, gateway, services, frontends). The container runtime is auto-detected — **Docker Desktop or Podman** (Podman machines are configured rootful automatically):
+
+```bash
+# Windows
+start-ecommerce.bat                 # force a runtime: start-ecommerce.bat -Runtime podman
+
+# Linux / macOS / WSL / Git Bash
+./start-ecommerce.sh                # force a runtime: RUNTIME=podman ./start-ecommerce.sh
+
+# or through the task runners
+make cluster-up                     # bash k3d-setup.sh
+.\scripts\dev.ps1 cluster-up        # k3d-setup.ps1
+```
+
+Then map the hostnames (the Windows script offers to update the hosts file — run it elevated):
+`127.0.0.1 ecommerce.local admin.ecommerce.local api.ecommerce.local keycloak.ecommerce.local rustfs.ecommerce.local`
+
+Storefront `http://ecommerce.local` · backoffice `http://admin.ecommerce.local` · gateway `http://api.ecommerce.local`.
+
 ## 🧰 Developer Workflow
 
 Every workflow is available through **make** (Linux, macOS, WSL, Git Bash, CI) and through **`scripts/dev.ps1`** (native Windows PowerShell) — the two are 1:1 equivalents:
@@ -204,6 +225,7 @@ Every workflow is available through **make** (Linux, macOS, WSL, Git Bash, CI) a
 | Run one Go service | `make go-run SVC=product-service` | `.\scripts\dev.ps1 go-run product-service` |
 | Run one Bun service | `make bun-dev SVC=rating-service` | `.\scripts\dev.ps1 bun-dev rating-service` |
 | Start the stack | `make up` / `make infra-up` | `.\scripts\dev.ps1 up` / `infra-up` |
+| One-shot k3d cluster | `make cluster-up` | `.\scripts\dev.ps1 cluster-up` |
 | Logs / status / restart | `make logs SVC=…`, `make ps`, `make restart SVC=…` | `.\scripts\dev.ps1 logs …`, … |
 
 Raw commands work too — the repo root is **not** a Go module, so list the workspace modules explicitly:

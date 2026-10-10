@@ -2,7 +2,8 @@
 # =============================================================================
 # k3d-setup.sh — One-shot local deployment on Kubernetes (k3d / k3s)
 #
-# Only requirement: Docker must be running on your machine.
+# Container runtime: Docker or Podman, auto-detected (Docker wins when both
+# are available). Force one with:  RUNTIME=podman bash k3d-setup.sh
 # k3d and kubectl will be installed automatically if missing.
 #
 # Supports: macOS · Linux · Windows (Git Bash / WSL)
@@ -184,6 +185,75 @@ update_hosts() {
   fi
 }
 
+# Container runtime detection — Docker preferred, Podman supported.
+docker_ready()   { command -v docker &>/dev/null && docker info &>/dev/null; }
+podman_present() { command -v podman &>/dev/null; }
+
+# Point Docker-compatible clients (k3d) at the Podman API and, on Windows /
+# macOS, make sure the Podman machine is running in rootful mode.
+setup_podman() {
+  podman_present || error "Podman not found.\n     Install Podman: https://podman.io/getting-started/installation"
+
+  case "$OS" in
+    windows)
+      # Windows + Podman Desktop: k3d talks to the Podman Machine over its named pipe.
+      local machine rootful state pipe
+      machine="$(podman machine list --format '{{.Name}}' 2>/dev/null | head -1 | tr -d '*[:space:]')"
+      [ -n "$machine" ] || error "No Podman machine found.\n     Create one first: podman machine init --rootful"
+
+      rootful="$(podman machine inspect "$machine" --format '{{.Rootful}}' 2>/dev/null | tr -d '[:space:]')"
+      if [ "$rootful" != "true" ]; then
+        warn "Podman machine '$machine' is rootless — k3d requires rootful; reconfiguring..."
+        podman machine stop "$machine" &>/dev/null || true
+        podman machine set --rootful "$machine" &>/dev/null \
+          || error "Failed to enable rootful mode.\n     Run: podman machine stop $machine && podman machine set --rootful $machine"
+      fi
+
+      state="$(podman machine inspect "$machine" --format '{{.State}}' 2>/dev/null | tr -d '[:space:]')"
+      if [ "$state" != "running" ]; then
+        start_spinner "Starting Podman machine '$machine'..."
+        podman machine start "$machine" &>/dev/null || { stop_spinner; error "Failed to start Podman machine '$machine'."; }
+        stop_spinner
+      fi
+
+      pipe="$(podman machine inspect "$machine" --format '{{.ConnectionInfo.PodmanPipe.Path}}' 2>/dev/null | head -1 | tr -d '\r')"
+      [ -n "$pipe" ] || pipe='\\.\pipe\podman-machine-default'
+      export DOCKER_HOST="npipe://$(printf '%s' "$pipe" | tr '\\' '/')"
+
+      # Prepare the VM for k3d + Elasticsearch: keep the API socket alive,
+      # expose docker.sock and raise vm.max_map_count.
+      podman machine ssh "$machine" "sudo mkdir -p /etc/containers/containers.conf.d && printf '[engine]\nservice_timeout=0\n' | sudo tee /etc/containers/containers.conf.d/timeout.conf >/dev/null; sudo systemctl enable --now podman.socket >/dev/null 2>&1 || true; sudo ln -sf /run/podman/podman.sock /var/run/docker.sock 2>/dev/null || true; sudo sysctl -w vm.max_map_count=262144 >/dev/null 2>&1 || true" &>/dev/null || true
+      ;;
+    darwin)
+      # macOS: Podman runs inside a VM — use the machine's socket.
+      local socket
+      socket="$(podman machine inspect --format '{{.ConnectionInfo.PodmanSocket.Path}}' 2>/dev/null | head -1 | tr -d '\r')"
+      if [ -z "$socket" ]; then
+        podman machine start &>/dev/null || true
+        socket="$(podman machine inspect --format '{{.ConnectionInfo.PodmanSocket.Path}}' 2>/dev/null | head -1 | tr -d '\r')"
+      fi
+      [ -n "$socket" ] || error "Could not determine the Podman socket.\n     Check: podman machine inspect"
+      export DOCKER_HOST="unix://$socket"
+      ;;
+    *)
+      # Linux: use the systemd-managed Podman API socket.
+      local uid
+      uid="$(id -u)"
+      if [ -z "${DOCKER_HOST:-}" ]; then
+        if [ -S "${XDG_RUNTIME_DIR:-/run/user/$uid}/podman/podman.sock" ]; then
+          export DOCKER_HOST="unix://${XDG_RUNTIME_DIR:-/run/user/$uid}/podman/podman.sock"
+        elif [ -S /run/podman/podman.sock ]; then
+          export DOCKER_HOST="unix:///run/podman/podman.sock"
+        else
+          error "Podman API socket not found.\n     Start it with: systemctl --user start podman.socket"
+        fi
+      fi
+      ;;
+  esac
+
+  success "Podman is running  (DOCKER_HOST=$DOCKER_HOST)"
+}
+
 # BANNER
 detect_os_arch
 
@@ -191,6 +261,7 @@ printf "\n"
 hr
 printf "${BOLD}${CYAN} Ecommerce Microservices · K8s Setup ${NC}\n"
 printf "  ${DIM}Platform  ${NC}  ${OS} · ${ARCH}\n"
+printf "  ${DIM}Runtime   ${NC}  %s\n" "${RUNTIME:-auto} (auto-detect, Docker preferred)"
 printf "  ${DIM}Cluster   ${NC}  ${CLUSTER_NAME}\n"
 printf "  ${DIM}Started   ${NC}  $(date '+%H:%M:%S')\n"
 hr
@@ -200,13 +271,30 @@ step "Detect environment"
 success "OS=${OS}  ARCH=${ARCH}"
 step_done
 
-# 2. Docker
-step "Check Docker"
-command -v docker &>/dev/null \
-  || error "Docker not found.\n     Install Docker Desktop: https://www.docker.com/get-started"
-docker info &>/dev/null \
-  || error "Docker is not running.\n     Please start Docker Desktop and try again."
-success "Docker is running  ($(docker version --format '{{.Server.Version}}' 2>/dev/null || echo 'unknown'))"
+# 2. Container runtime (Docker preferred, Podman supported)
+step "Check container runtime"
+RUNTIME="${RUNTIME:-auto}"
+case "$RUNTIME" in
+  docker)
+    docker_ready || error "Docker is installed but its daemon is not reachable.\n     Start Docker Desktop and try again, or use: RUNTIME=podman bash k3d-setup.sh"
+    success "Docker is running  ($(docker version --format '{{.Server.Version}}' 2>/dev/null || echo 'unknown'))"
+    ;;
+  podman)
+    setup_podman
+    ;;
+  *)
+    if docker_ready; then
+      success "Docker is running  ($(docker version --format '{{.Server.Version}}' 2>/dev/null || echo 'unknown'))"
+      RUNTIME="docker"
+    elif podman_present; then
+      setup_podman
+      RUNTIME="podman"
+    else
+      error "No container runtime found.\n     Install Docker (https://www.docker.com/get-started) or Podman (https://podman.io/getting-started/installation)"
+    fi
+    ;;
+esac
+success "Container runtime: $RUNTIME"
 step_done
 
 # 3. k3d
@@ -241,11 +329,16 @@ if k3d cluster list 2>/dev/null | grep -q "^${CLUSTER_NAME}"; then
     success "Cluster started"
   fi
 else
+  if [ "$RUNTIME" = "podman" ]; then
+    # Podman needs the default bridge network before k3d creates the cluster network
+    podman network inspect podman &>/dev/null || podman network create podman &>/dev/null || true
+  fi
   start_spinner "Creating cluster '${CLUSTER_NAME}'..."
   k3d cluster create --config k3d-config.yaml &>/dev/null
   stop_spinner
   success "Cluster '${CLUSTER_NAME}' created"
 fi
+k3d kubeconfig merge "$CLUSTER_NAME" --kubeconfig-merge-default --kubeconfig-switch-context &>/dev/null || true
 kubectl config use-context "k3d-${CLUSTER_NAME}" > /dev/null
 start_spinner "Waiting for API server..."
 until kubectl get nodes &>/dev/null 2>&1; do sleep 2; done

@@ -110,7 +110,7 @@ function Show-Help {
     Write-Host "    images                 Build all Docker images without starting"
     Write-Host ""
     Write-Host "  Kubernetes (k3d - legacy path)"
-    Write-Host "    cluster-up             One-shot k3d deploy (runs k3d-setup.sh via bash)"
+    Write-Host "    cluster-up             One-shot k3d deploy (k3d-setup.ps1, Docker or Podman)"
     Write-Host "    cluster-status         kubectl get pods -n ecommerce -o wide"
     Write-Host "    cluster-down           Delete the k3d cluster"
     Write-Host ""
@@ -256,10 +256,14 @@ switch ($Task.ToLowerInvariant()) {
     }
     "images"         { docker compose build; Assert-LastExit "docker compose build" }
     "cluster-up"     {
-        $bash = Get-Command bash -ErrorAction SilentlyContinue
-        if (-not $bash) { Fail "cluster-up needs Git Bash or WSL on PATH (bash not found)" }
-        bash k3d-setup.sh
-        Assert-LastExit "k3d-setup.sh"
+        $setupScript = Join-Path $repoRoot "k3d-setup.ps1"
+        if (-not (Test-Path $setupScript)) { Fail "k3d-setup.ps1 not found in the repository root" }
+        if (Get-Command pwsh -ErrorAction SilentlyContinue) {
+            pwsh -NoProfile -ExecutionPolicy Bypass -File $setupScript
+        } else {
+            powershell -NoProfile -ExecutionPolicy Bypass -File $setupScript
+        }
+        Assert-LastExit "k3d-setup.ps1"
     }
     "cluster-status" { kubectl get pods -n ecommerce -o wide; Assert-LastExit "kubectl get pods" }
     "cluster-down"   { k3d cluster delete ecommerce; Assert-LastExit "k3d cluster delete" }

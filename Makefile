@@ -146,7 +146,7 @@ images: ## Build all Docker images without starting them
 
 .PHONY: cluster-up cluster-status cluster-down
 
-cluster-up: ## Create/refresh the k3d cluster and deploy the manifests
+cluster-up: ## Create/refresh the k3d cluster and deploy the manifests (Docker or Podman)
 	bash k3d-setup.sh
 
 cluster-status: ## Show pods in the ecommerce namespace
