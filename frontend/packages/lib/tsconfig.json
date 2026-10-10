@@ -1,8 +1,15 @@
 {
-  "extends": "@ecommerce/config/tsconfig/base.json",
-  "compilerOptions": {
-    "jsx": "preserve"
-  },
-  "include": ["src"],
-  "exclude": ["node_modules"]
+	"compilerOptions": {
+		"target": "ES2022",
+		"module": "ESNext",
+		"moduleResolution": "bundler",
+		"lib": ["ES2022", "DOM"],
+		"strict": true,
+		"noEmit": true,
+		"skipLibCheck": true,
+		"isolatedModules": true,
+		"verbatimModuleSyntax": true,
+		"types": ["bun"]
+	},
+	"include": ["src"]
 }
