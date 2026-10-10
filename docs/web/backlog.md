@@ -12,10 +12,10 @@ Granular task list for the SvelteKit rewrite. Grouped by area, roughly in execut
 - [x] `@sveltejs/adapter-bun` in both apps; `experimental.remoteFunctions` + `compilerOptions.experimental.async`
 - [x] `bun install` (205 packages), production builds, `lint`, `check` (0 errors / 0 warnings), live `bun ./build` smoke test (200, `<html lang="vi">`)
 - [x] `docs/web/` — dev-guide, roadmap, backlog
-- [~] `@ecommerce/lib` — files written: `types.ts`, `format.ts`, `schemas.ts` (Zod), `server/env.ts`, `server/api.ts`, `server/index.ts`, `index.ts`
+- [x] `@ecommerce/lib` — `types.ts`, `format.ts`, `schemas.ts` (Zod), `cart.ts` (shared totals/free-shipping), `server/` (env, api, session, redirect), `index.ts`
 - [x] `@ecommerce/lib` wired into both apps (devDependency so the Bun adapter bundles the TS source) and verification passed
-- [ ] Unit tests in `packages/lib` (`bun test`): formatters, schema coercion (`optionalId`, `formNumber`), API envelope unwrapping (mock fetch)
-- [ ] Root script sanity: `bun run check/lint/format/test` across all workspaces
+- [x] Unit tests in `packages/lib` (`bun test`, 60 tests): formatters, cart totals, schema coercion (`optionalId`, `formNumber`), API envelope unwrapping (mock fetch), session cookies (`setSession`/refresh), `safeRedirect`
+- [x] Root script sanity: `bun run check` / `lint` / `format` / `test` / `i18n:check` across all workspaces — green
 
 ## Theming & UI kit
 
@@ -23,8 +23,8 @@ Granular task list for the SvelteKit rewrite. Grouped by area, roughly in execut
   - [x] red palette `primary-50…900` (`#e30019` at 500), orange-scale remap, `--background`/`--foreground`
   - [x] utilities: `no-scrollbar`, `brand-pulse` (line-clamp is native in Tailwind 4)
   - [x] merged with shadcn-svelte's theme variables (don't clobber its `@theme`/`:root` blocks)
-- [ ] Fonts: Geist (old app used `next/font`); pick `@fontsource-variable/geist` and set `--font-sans`
-- [x] shadcn-svelte set up in both apps (manual init; v1.7 preset prompt is interactive). NOTE: `init` — CSS path `src/routes/layout.css`, aliases `$lib/components`, `$lib/components/ui`, `$lib/utils` (utils re-exports `cn` from `@ecommerce/lib/format`)
+- [x] Fonts: Geist via `@fontsource-variable/geist`; `--font-sans` set in the shared theme (both apps; verified woff2 emission and serving)
+- [x] shadcn-svelte set up in both apps (manual init; v1.7 preset prompt is interactive). NOTE: `init` — CSS path `src/routes/layout.css`, aliases `$lib/components`, `$lib/components/ui`, `$lib/utils` (utils re-exports `cn` from `@ecommerce/lib/format`). Imports now resolve through the `#lib/*` subpath map — the deprecated `$lib` alias was removed from both options configs.
 - [x] Base components added in both apps:
   - [ ] button, input, label, textarea, badge
   - [ ] card, separator, skeleton
@@ -34,17 +34,17 @@ Granular task list for the SvelteKit rewrite. Grouped by area, roughly in execut
   - [ ] sonner (`svelte-sonner`) — toasts only, no `alert()`
 - [x] Mounted `<Toaster />` in both root layouts (toasts replace alert/confirm)
 - [x] Icon set: `@lucide/svelte` (installed in both apps)
-- [ ] Empty/loading states as small shared components (`EmptyState`, `TableSkeleton`)
+- [x] Empty/loading states as shared components (`EmptyState`, `TableSkeleton`) in `@ecommerce/ui` — adopted on storefront orders and the admin orders/products tables
 
 ## i18n
 
 - [x] Paraglide i18n routing (verified live): `vi` unprefixed / `en` prefixed, strategy `['url', 'cookie', 'baseLocale']`, cookie persistence, `reroute` sanity
-- [ ] Migrate message catalogs (script-assisted flatten of old nested JSON → Paraglide flat keys):
+- [x] Migrate message catalogs (script-assisted flatten of old nested JSON → Paraglide flat keys):
   - [x] web: 297 flat keys x 2 locales migrated (script-assisted flatten)
   - [x] admin: 109 flat keys x 2 locales migrated
 - [x] Language switcher in the storefront header (link-based + `data-sveltekit-reload`, SSR-correct)
-- [ ] Key-parity check between locales (script, runnable in CI)
-- [ ] Sweep: no hardcoded user-facing strings (including mock data titles where feasible)
+- [x] Key-parity check between locales (`bun run i18n:check`, wired into the CI frontend job)
+- [x] Sweep: no hardcoded user-facing strings — the last four `aria-label`s now use `common_decrease`/`common_increase`; remaining Vietnamese strings are vendored mock product *data* (`home-mock.ts`)
 
 ## Auth & session
 
@@ -72,23 +72,23 @@ Granular task list for the SvelteKit rewrite. Grouped by area, roughly in execut
 
 ## Admin
 
-- [x] Shell: sidebar (8 nav items), topbar, mobile nav, logout (drawer later)
+- [x] Shell: sidebar (8 nav items), topbar, mobile drawer (sheet), logout
 - [x] Dashboard: stat cards, recent orders, recent products (query-driven; same query keys/args as lists so mutations refresh both — old cache-key bug)
 - [x] Products: table (search, pagination), create/edit dialog with remote `form(productFormSchema)`, delete confirm, toasts
-- [~] Orders: table + client-side id filter (row detail still pending)
+- [x] Orders: table + client-side id filter + row detail dialog (order/product/cart/user fields)
 - [x] Categories: card grid, create/edit/delete
 - [x] Stubs: users, inventory, shipping, settings (keep the “under development” pattern)
 
 ## Infrastructure & tooling
 
-- [ ] Dockerfile `apps/web` — `oven/bun:1`, `bun install --frozen-lockfile`, `bun run build`; runtime `bun install --production --frozen-lockfile` + `bun ./build`, non-root user, EXPOSE 3000
-- [ ] Dockerfile `apps/admin` — same, port 3001
-- [ ] Remove `NEXT_PUBLIC_API_URL` arg/ENV from both Dockerfiles and CI
-- [ ] compose: add `admin` service, fix `frontend` image ref (`ghcr.io/<owner>/frontend-web`), set `API_INTERNAL_URL=http://apisix:9080`, ports 3000/3001
-- [ ] k8s manifests: `API_INTERNAL_URL=http://apisix-gateway:9080`, `PROTOCOL_HEADER=x-forwarded-proto`; verify probes on `/`
-- [ ] CI (`ci.yml`): frontend job = `bun install` → `check` → `lint` → `test` with `oven-sh/setup-bun`; keep Docker build/push jobs
-- [ ] Root `Makefile` + `scripts/dev.ps1`: `web-install/web-dev/web-build` → Bun workspace commands (drop pnpm)
-- [ ] Root `README.md`: frontend stack rows/commands updated (pnpm → Bun, Next.js → SvelteKit)
+- [x] Dockerfile `apps/web` — `docker.io/oven/bun:1`; build `bun install --frozen-lockfile` + `bun run build`; runtime copies `build/` and runs `bun ./build` as the `bun` user (the bundle is self-contained — no production install needed), EXPOSE 3000; `frontend/.dockerignore` added
+- [x] Dockerfile `apps/admin` — same, port 3001. Both images built and run locally with Podman: storefront serves `/` + `/en` (fonts verified), admin serves `/login` and guards `/dashboard` server-side
+- [x] No `NEXT_PUBLIC_API_URL` anywhere in the new Dockerfiles/CI (stale image references gone)
+- [x] compose: `admin` service added, `frontend` image ref fixed (`frontend-web`), `API_INTERNAL_URL`/`API_PUBLIC_URL`/`ORIGIN` set, ports 3000/3001
+- [x] k8s manifests: `API_INTERNAL_URL=http://apisix-gateway:9080` + `API_PUBLIC_URL` + `PROTOCOL_HEADER=x-forwarded-proto`; probes unchanged
+- [x] CI (`ci.yml`): `frontend-check` job = `bun install --frozen-lockfile` → `check` → `lint` → `i18n:check` → `test` with `oven-sh/setup-bun`; Docker build/push jobs kept and gated in `ci-success`
+- [x] Root `Makefile` + `scripts/dev.ps1`: `web-install`/`web-dev`/`web-build` → Bun, plus `web-check`/`web-lint`/`web-test`
+- [x] Root `README.md`: frontend stack rows/commands updated (pnpm → Bun, Next.js → SvelteKit)
 
 ## Fixes carried from the old app (do **not** re-introduce)
 
@@ -101,15 +101,15 @@ Granular task list for the SvelteKit rewrite. Grouped by area, roughly in execut
 - [x] Admin `/login` no longer 404s on refresh failure (old: hard redirect to a storefront-only route)
 - [x] Logout no longer bounces straight back into Keycloak SSO
 - [x] No `alert()` / `window.confirm()` as UI (svelte-sonner toasts + shadcn dialog/alert-dialog)
-- [ ] Cart totals/free-shipping logic defined once
+- [x] Cart totals/free-shipping logic defined once — `@ecommerce/lib/cart` `computeTotals`; the cart store, cart page and checkout command all consume it
 
 ## Quality
 
-- [ ] `+error.svelte` per app; route-level error states for gateway failures (helpful message when the API is unreachable in dev)
+- [x] `+error.svelte` per app — branded, localized (404 vs generic), with home/retry actions; gateway failures surface as the generic error state
 - [ ] A11y: focus trap/restore for dialog/sheet/drawer, keyboard nav for menus, form labels + `aria-invalid`
-- [ ] SEO (storefront): per-route `<title>`/meta via Paraglide, `hreflang` for `vi`/`en`, sitemap, robots
+- [x] SEO (storefront): per-route `<title>`/meta via Paraglide, `hreflang` + canonical in the root layout, localized `sitemap.xml` route, robots (private flows disallowed; admin app `Disallow: /`)
 - [ ] Performance: prerender marketing/static routes; review bundle output after the port
-- [ ] Dev experience: `.env.example` per app documenting `API_INTERNAL_URL`
+- [x] Dev experience: `.env.example` per app documenting `API_INTERNAL_URL`, `API_PUBLIC_URL`, `PORT`, `ORIGIN`, `PROTOCOL_HEADER`
 
 ## Deferred (do not start without a decision)
 

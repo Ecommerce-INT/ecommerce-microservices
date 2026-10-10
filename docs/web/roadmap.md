@@ -17,7 +17,7 @@ Deliverables
 - [x] `@sveltejs/adapter-bun` wired; `experimental.remoteFunctions` + `compilerOptions.experimental.async` enabled
 - [x] Verified: install, production builds, `lint`, `check` (0/0), live `bun ./build` smoke test
 - [x] `docs/web/` (this folder): dev guide, roadmap, backlog
-- [~] `@ecommerce/lib` — types, Zod schemas, formatters, server API client written; workspace wiring + tests pending
+- [x] `@ecommerce/lib` — types, Zod schemas, formatters, server API client, session/redirect helpers + 60 unit tests
 
 **Exit criteria:** `bun run build`, `bun run check`, `bun run lint` pass on a clean clone; docs describe the whole workflow; nothing references pnpm/Next in the frontend tree.
 
@@ -28,21 +28,21 @@ Deliverables
 **Goal:** the shell every page needs — theme, components, i18n routing, session plumbing.
 
 Deliverables
-- [ ] Wire `@ecommerce/lib` into both apps (workspace dep + Vite SSR handling) and add unit tests (`bun test`)
-- [ ] Brand theme ported into `src/routes/layout.css` (red `#e30019` palette, orange-scale remap, line-clamp/no-scrollbar utilities)
-- [ ] shadcn-svelte initialized in both apps + base component set added (button, input, label, textarea, badge, card, dialog, alert-dialog, dropdown-menu, select, table, sheet, skeleton, sonner, pagination, breadcrumb, separator)
-- [ ] `Toaster` mounted in both root layouts; feedback via toasts/dialogs only
-- [ ] Paraglide i18n routing configured: `vi` unprefixed, `en` at `/en/**` (URL strategy + cookie + base locale), language switcher component
-- [ ] Message catalogs migrated from the old apps (web ≈ 327 lines × 2 locales, admin ≈ 137 × 2) — script-assisted flattening, plural-free
+- [x] `@ecommerce/lib` wired into both apps (workspace dep + Vite SSR handling) with unit tests (`bun test`, 60 tests)
+- [x] Brand theme ported into `src/routes/layout.css` (red `#e30019` palette, orange-scale remap, line-clamp/no-scrollbar utilities) + Geist variable font (`@fontsource-variable/geist`, both apps)
+- [x] shadcn-svelte base set provided once by `@ecommerce/ui` and consumed by both apps (button, input, label, textarea, badge, card, dialog, alert-dialog, dropdown-menu, select, table, sheet, skeleton, sonner, pagination, breadcrumb, separator, empty-state, table-skeleton)
+- [x] `Toaster` mounted in both root layouts; feedback via toasts/dialogs only
+- [x] Paraglide i18n routing configured: `vi` unprefixed, `en` at `/en/**` (URL strategy + cookie + base locale), language switcher component
+- [x] Message catalogs migrated from the old apps (web 297 × 2, admin 120 × 2 flat keys) — script-assisted flattening, plural-free; `bun run i18n:check` verifies key parity
 - [x] Session helpers in `@ecommerce/lib/server`: cookie names, set/clear, refresh-on-expiry, `locals.user`, `safeRedirect`, `isAdmin`
 - [x] `hooks.server.ts` extended: Paraglide handle + session bootstrap (auth guard arrives in phase 2/3)
-- [ ] Storefront cart store (`$lib/stores/cart.svelte.ts`, runes + localStorage key `ecommerce-cart`)
+- [x] Storefront cart store (`#lib/stores/cart.svelte.ts`, runes + localStorage key `ecommerce-cart`)
 
 **Exit criteria:** both apps render styled shells in both locales, with a locale switcher and a working toast; session helpers are unit-testable and typed; `check`/`lint` stay green.
 
 ---
 
-## Phase 2 — Storefront parity `[~]`
+## Phase 2 — Storefront parity `[x]`
 
 **Goal:** every storefront route of the old app, but server-rendered via remote functions.
 
@@ -60,15 +60,15 @@ Deliverables
 
 ---
 
-## Phase 3 — Backoffice parity `[~]`
+## Phase 3 — Backoffice parity `[x]`
 
 **Goal:** the admin app the old one promised, with the role check it never had.
 
 Deliverables
-- [x] Admin shell: sidebar, topbar, mobile nav; **strict ADMIN guard in `apps/admin/src/hooks.server.ts`** (mobile drawer pending)
+- [x] Admin shell: sidebar, topbar, mobile drawer (sheet); **strict ADMIN guard in `apps/admin/src/hooks.server.ts`**
 - [x] Dashboard: count cards from `totalElements` + recent orders/products (revenue and user counts need aggregate endpoints - see backlog)
 - [x] Products: table (search + pagination), create/edit dialog on a remote `form` + Zod, delete with confirm dialog
-- [~] Orders: table + client-side id filter; row detail still pending
+- [x] Orders: table + client-side id filter + row detail dialog (order, product, cart, user, status)
 - [x] Categories: card grid + create/edit/delete
 - [x] Users / Inventory / Shipping / Settings remain explicit stubs (as in the old app)
 
@@ -76,29 +76,29 @@ Deliverables
 
 ---
 
-## Phase 4 — Delivery `[ ]`
+## Phase 4 — Delivery `[~]`
 
 **Goal:** the new apps ship through the existing pipelines with as little topology change as possible.
 
 Deliverables
-- [ ] Dockerfiles rewritten on `oven/bun:1` (≥1.4): build stage `bun install --frozen-lockfile && bun run build`; runtime stage `bun install --production` + `bun ./build`, non-root; ports/EXPOSE stay 3000/3001
-- [ ] `NEXT_PUBLIC_API_URL` build plumbing removed from Dockerfiles/CI
-- [ ] compose: legacy `frontend` image reference fixed, missing `admin` service added, `API_INTERNAL_URL` set
-- [ ] k8s `frontend`/`admin` manifests: `API_INTERNAL_URL` + `PROTOCOL_HEADER=x-forwarded-proto` (plain-HTTP ingress); probes unchanged
-- [ ] CI: frontend job runs `bun install` + `check` + `lint` (+ `bun test`) with `oven-sh/setup-bun`; Docker build jobs keep working unchanged
-- [ ] Root tooling: `Makefile` and `scripts/dev.ps1` `web-*` targets switch from pnpm to Bun; README updated
+- [x] Dockerfiles rewritten on `oven/bun:1` (≥1.4): build stage `bun install --frozen-lockfile && bun run build`; runtime stage runs `bun ./build` as the non-root `bun` user (build output is self-contained); ports/EXPOSE stay 3000/3001
+- [x] `NEXT_PUBLIC_API_URL` build plumbing removed from Dockerfiles/CI (stale Dockerfiles deleted with the old frontend; new ones have no build-time API vars)
+- [x] compose: legacy `frontend` image reference fixed (`frontend-web`), missing `admin` service added, `API_INTERNAL_URL`/`API_PUBLIC_URL`/`ORIGIN` set
+- [x] k8s `frontend`/`admin` manifests: `API_INTERNAL_URL` + `API_PUBLIC_URL` + `PROTOCOL_HEADER=x-forwarded-proto`; probes unchanged
+- [x] CI: `frontend-check` job runs `bun install --frozen-lockfile` + `check` + `lint` + `i18n:check` + `bun test` with `oven-sh/setup-bun`; Docker build jobs unchanged and gated in `ci-success`
+- [x] Root tooling: `Makefile` and `scripts/dev.ps1` `web-*` targets switched to Bun (plus new `web-check`/`web-lint`/`web-test`); README updated
 
-**Exit criteria:** CI green on the branch; `docker build` for both apps succeeds; `make cluster-up` deploys the SvelteKit apps and the ingress hostnames serve them.
+**Exit criteria:** CI green on the branch; `docker build` for both apps succeeds; `make cluster-up` deploys the SvelteKit apps and the ingress hostnames serve them. *(both images build and run locally with Podman from the `frontend/` context — storefront serves `/` + `/en` with fonts, admin serves `/login` and redirects `/dashboard` server-side; CI run and `make cluster-up` remain)*
 
 ---
 
 ## Phase 5 — Hardening `[ ]`
 
-- [ ] Error boundaries (`+error.svelte`), loading states, empty states on every list/detail route
-- [ ] Accessibility pass: focus management for dialogs/menus/drawer, keyboard nav, labels
-- [ ] SEO: per-page titles/meta via Paraglide, `hreflang`, `robots.txt`, sitemap for the storefront
+- [x] Error boundaries (`+error.svelte`, branded + localized, with retry) in both apps; shared `EmptyState` / `TableSkeleton` adopted on the main list routes (per-route sweep continues opportunistically)
+- [ ] Accessibility pass: focus management for dialogs/menus/drawer, keyboard nav, labels (bits-ui primitives already trap focus; no formal audit yet)
+- [x] SEO: per-route titles/meta via Paraglide, `hreflang` + canonical alternates in the storefront layout, localized `sitemap.xml` route, robots.txt (storefront: private flows disallowed; admin: `Disallow: /`)
 - [ ] Performance: prerender static routes where possible, audit bundle output, image sizing (`loading="lazy"`, `srcset` if a transform pipeline appears)
-- [ ] i18n completeness sweep: no hardcoded strings, both catalogs key-identical (add a key-parity check)
+- [x] i18n completeness sweep: no hardcoded UI copy left (fixed the last four `aria-label`s); the only remaining Vietnamese strings are vendored mock *product data* in `home-mock.ts`, which is data rather than chrome
 - [ ] Remove dead code carried from the old apps (unused components, mock leftovers)
 
 **Exit criteria:** no blank/white error screens, Lighthouse a11y ≥ 95 on storefront routes, locale catalogs verified in CI.

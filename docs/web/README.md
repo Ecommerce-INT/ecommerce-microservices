@@ -28,8 +28,9 @@ frontend/
 
 ## Status at a glance
 
-- Stack scaffolded and verified (Bun workspaces, Kit 3, Tailwind 4, Paraglide vi/en, `@sveltejs/adapter-bun`, remote functions).
-- Storefront is feature-complete: shell, home, catalog (filters/search/pagination), PDP, cart, SSO login/callback/logout, checkout (3-step, server-priced), orders.
-- Backoffice is feature-complete for its four real screens (dashboard, products, orders, categories) plus stubs, behind the strict admin guard.
-- All four packages pass `check` + `lint`; both apps build and are smoke-tested (guards, locales, SSR).
-- Not yet verified against a running backend (no cluster on the dev machine) and not yet deployed: Dockerfiles, CI, compose/k8s env, Makefile/dev.ps1 targets.
+- Stack scaffolded and verified (Bun workspaces, Kit 3, Tailwind 4 + Geist, Paraglide vi/en, `@sveltejs/adapter-bun`, remote functions).
+- Storefront is feature-complete: shell, home, catalog (filters/search/pagination), PDP, cart (shared `computeTotals` money math), SSO login/callback/logout, checkout (3-step, server-priced), orders.
+- Backoffice is feature-complete for its four real screens (dashboard, products, orders + row-detail dialog, categories) plus stubs, behind the strict admin guard, with a mobile sheet drawer.
+- All four packages pass `check` + `lint`; `bun test` covers `@ecommerce/lib` (60 tests); `bun run i18n:check` enforces locale parity; both apps build and are smoke-tested (guards, locales, SSR, fonts).
+- Hardening: branded localized `+error.svelte` pages, `hreflang`/canonical alternates, localized sitemap + robots (admin noindex), shared `EmptyState`/`TableSkeleton`; imports resolve through the `#lib/*` subpath map (no deprecated `$lib` alias).
+- Delivery assets are written (Dockerfiles on `oven/bun:1`, CI `frontend-check` job, compose `frontend`+`admin`, k8s env, Makefile/dev.ps1 Bun targets). Both images were built and smoke-tested locally with Podman (storefront `/` + `/en` with fonts; admin `/login` and server-side `/dashboard` guard) — a real CI run and k3d deploy remain, and the apps are not yet verified against a live backend (no cluster on the dev machine).

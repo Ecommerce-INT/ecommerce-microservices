@@ -17,7 +17,7 @@
 | Server runtime / adapter | **`@sveltejs/adapter-bun` 1.0.0** (official) | Real `Bun.serve` server, ETags/range requests for assets, graceful shutdown. Requires Bun ≥ 1.4; respects `HOST`/`PORT`. |
 | Data layer | **SvelteKit remote functions** — `query` / `form` / `command` / `prerender` from `$app/server` | Type-safe client↔server calls, request dedupe/caching, single-flight mutations (`refresh()` / `set()`), progressive-enhancement forms. Replaces axios + TanStack Query + form actions. |
 | Validation | **Zod 4** (Standard Schema) | Every remote-function argument and form payload validates server-side by default; `preflight()` adds optional client-side validation. |
-| UI | **`@ecommerce/ui`**: shared shadcn-svelte primitives (bits-ui) + brand theme on **Tailwind CSS 4**, `@lucide/svelte`, **svelte-sonner** | One copy of the primitives for both apps; toasts/dialogs instead of `alert()` / `confirm()`. |
+| UI | **`@ecommerce/ui`**: shared shadcn-svelte primitives (bits-ui) + brand theme on **Tailwind CSS 4**, `@lucide/svelte`, **svelte-sonner**, Geist variable font (`@fontsource-variable/geist`) | One copy of the primitives for both apps; toasts/dialogs instead of `alert()` / `confirm()`. |
 | i18n | **Paraglide JS** (SvelteKit's official integration) | Tree-shaken, fully typed messages. Locales `vi` (base) and `en`; target URL contract stays vi-unprefixed + `/en/...` like the old app. |
 | Auth | **BFF**: httpOnly cookies set in `hooks.server.ts` | Tokens never touch JS/localStorage (helpers in `@ecommerce/lib/server`); server-side route guards — including the admin role check the old app never had. |
 | Client state | Svelte runes modules (`*.svelte.ts`) | Only the cart needs client state; its localStorage key (`ecommerce-cart`) is preserved. |
@@ -98,9 +98,10 @@ vite.config.ts              # adapter + plugins + experimental flags
 
 - **All data access goes through `*.remote.ts` modules.** Components never call the gateway directly; handlers stay thin: validate → call `@ecommerce/lib` server API client → return domain types.
 - **Zod schemas are shared** in `@ecommerce/lib/schemas`; the server-only API client lives in `@ecommerce/lib/server` (never imported by client code).
+- **Imports:** app code resolves through the `#lib/*` subpath map (Kit 3 deprecated the custom `$lib` alias). The map lives in each app's `package.json` `imports` field, with a matching `paths` entry in its `tsconfig.json` so svelte-check resolves extensionless targets like `#lib/server/api` → `api.ts`.
 - **Server-only code** lives in `src/lib/server/**` — SvelteKit throws if a client component imports it.
 - **No hardcoded copy:** every user-facing string goes through `messages/{vi,en}.json` via `m.*` (Paraglide).
-- **UI primitives:** add with `bunx shadcn-svelte@latest add <component>` per app; composition components live in `$lib/components`.
+- **UI primitives:** add from the shared package (`cd frontend/packages/ui && bunx shadcn-svelte@latest add <component>`) and export via its `package.json`; app-level composition components live in `#lib/components`.
 - **Feedback:** svelte-sonner toasts for success/errors, shadcn dialogs for confirms.
 
 ---
@@ -137,10 +138,10 @@ bun ./build                  # Bun.serve on $PORT (default 3000)
 
 | Variable | Scope | Value |
 | :--- | :--- | :--- |
-| `API_INTERNAL_URL` | server-side (planned) | k8s: `http://apisix-gateway:9080` · compose: `http://apisix:9080` · local dev: `http://api.ecommerce.local` (or the composer's APISIX port) |
+| `API_INTERNAL_URL` | server-side | k8s: `http://apisix-gateway:9080` · compose: `http://apisix:9080` · local dev: `http://localhost:9080` |
 | `HOST` / `PORT` | built server | `0.0.0.0` / `3000` (web) or `3001` (admin) — set in k8s/compose; default port 3000 |
 | `PROTOCOL_HEADER` | built server behind a proxy | Set `x-forwarded-proto` in the cluster — the adapter otherwise assumes `https` |
-| `paths.origin` (config) | builds serving plain HTTP directly | For compose-style `http://localhost:3000` access; bake per environment at build time |
+| `ORIGIN` (runtime) | built server serving plain HTTP directly | compose sets `ORIGIN=http://localhost:3000`; a build-time `paths.origin` works too |
 
 There are **no public/build-time API variables anymore** — `NEXT_PUBLIC_API_URL` and its Docker/CI plumbing are obsolete.
 
@@ -203,11 +204,11 @@ export const getProducts = query(
 
 ## 10. Deployment
 
-- **Dockerfiles** (to be rewritten): `oven/bun:1` (≥ 1.4) build stage → `bun install --frozen-lockfile && bun run build`; runtime stage copies `build/`, `package.json`, `bun.lock`, runs `bun install --production --frozen-lockfile` and `bun ./build` as a non-root user.
-- **Unchanged:** ports **3000 / 3001**, Dockerfile paths (`frontend/apps/{web,admin}/Dockerfile`), CI build context `frontend/`, image names `frontend-web` / `frontend-admin`, k8s probes on `/` (SSR returns 200).
-- **k8s** (`k8s/frontend/*.yaml`): add `API_INTERNAL_URL` and `PROTOCOL_HEADER=x-forwarded-proto`.
-- **compose:** fix the stale legacy `ghcr.io/hoangtien2k3/frontend` image reference and add the missing admin service; plain-HTTP access needs a baked `paths.origin` or a TLS terminator.
-- **CI:** the frontend jobs currently only build Docker images; add `bun install` + `check` + `lint` (+ `bun test`) with `oven-sh/setup-bun`.
+- **Dockerfiles** (`frontend/apps/{web,admin}/Dockerfile`): `docker.io/oven/bun:1` build stage → `bun install --frozen-lockfile && bun run build`; runtime stage copies only `build/` and runs `bun ./build` as the non-root `bun` user — the SSR bundle is self-contained (no production install needed). `frontend/.dockerignore` keeps `node_modules`, `.svelte-kit` and `build` out of the context. Both images were built and smoke-tested locally with Podman.
+- **Unchanged:** ports **3000 / 3001**, Dockerfile paths, CI build context `frontend/`, image names `frontend-web` / `frontend-admin`, k8s probes on `/` (SSR returns 200).
+- **k8s** (`k8s/frontend/*.yaml`): `API_INTERNAL_URL=http://apisix-gateway:9080`, `API_PUBLIC_URL`, `PROTOCOL_HEADER=x-forwarded-proto`.
+- **compose:** `frontend` (image `frontend-web`) and `admin` services with `API_INTERNAL_URL=http://apisix:9080`, `API_PUBLIC_URL=http://localhost:9080` and `ORIGIN` set for plain-HTTP access.
+- **CI (`ci.yml`):** the `frontend-check` job runs `bun install --frozen-lockfile` → `check` → `lint` → `i18n:check` → `bun test` with `oven-sh/setup-bun`; the Docker build/push jobs are unchanged and gated behind it in `ci-success`.
 
 ---
 
@@ -219,7 +220,7 @@ Removed on this branch: the Next.js `apps/*`, the old hand-rolled `packages/ui` 
 | :--- | :--- |
 | axios client + TanStack Query hooks | `*.remote.ts` (`query` / `form`) + `@ecommerce/lib/server` API client |
 | zustand `authStore` + localStorage tokens | httpOnly cookie session (BFF) + `event.locals.user` |
-| zustand `cartStore` (persist `ecommerce-cart`) | `$lib/stores/cart.svelte.ts` — same localStorage key |
+| zustand `cartStore` (persist `ecommerce-cart`) | `#lib/stores/cart.svelte.ts` — same localStorage key |
 | next-intl `messages/*.json` (327 lines each app) | Paraglide `messages/{vi,en}.json` |
 | hand-rolled `@ecommerce/ui` | shadcn-svelte components per app |
 | `alert()` / `window.confirm()` | svelte-sonner toasts + shadcn dialog |
@@ -236,12 +237,14 @@ Bugs deliberately fixed while porting: catalog search wired to the API, paginati
 - [x] Bun workspace root + `apps/web` + `apps/admin` scaffolded (Kit 3, Tailwind 4, ESLint, Prettier, Paraglide vi/en)
 - [x] `@sveltejs/adapter-bun` wired in both apps; remote functions + async enabled
 - [x] Verified: `bun install`, production builds, `lint`, `check` (0 errors / 0 warnings), and a live `bun ./build` smoke test (`200`, `<html lang="vi">`)
-- [x] `packages/lib` written — types, Zod schemas, formatters, server-only gateway client (`@ecommerce/lib/{types,schemas,format,server}`); workspace wiring + unit tests pending
+- [x] `packages/lib` — types, Zod schemas, formatters, shared cart math, server-only gateway client + session helpers (`@ecommerce/lib/{types,schemas,format,cart,server}`), wired into both apps, covered by 60 unit tests
 - [x] Paraglide i18n-routing config so `vi` stays unprefixed (matches the old `as-needed` behaviour)
 - [x] shadcn-svelte components + brand theme, shared via `@ecommerce/ui`
 - [x] Auth BFF + storefront/admin guards (admin guard in hooks.server.ts)
-- [x] Storefront routes + admin routes (dashboard, products, orders, categories, stubs)
-- [ ] Dockerfiles, CI, compose, k8s updates
-- [ ] Stale tooling: root `Makefile` / `scripts/dev.ps1` `web-*` targets still call pnpm — switch to Bun
+- [x] Storefront routes + admin routes (dashboard, products, orders + row detail, categories, stubs)
+- [x] `@ecommerce/lib` unit tests (`bun test`, 60 tests) + locale key-parity check (`bun run i18n:check`)
+- [x] Geist variable font in both apps (+ fixed the admin app shipping without its stylesheet import)
+- [x] Dockerfiles, CI, compose, k8s updates (CI/Docker verification pending a pipeline run)
+- [x] Root `Makefile` / `scripts/dev.ps1` `web-*` targets switched to Bun (plus `web-check`/`web-lint`/`web-test`)
 
 Roadmap and granular task list: [roadmap.md](./roadmap.md) · [backlog.md](./backlog.md).
