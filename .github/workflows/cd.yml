@@ -79,29 +79,29 @@ jobs:
 
       - name: Deploy namespace & config
         run: |
-          kubectl apply -f k8s/namespace.yaml
-          kubectl apply -f k8s/secrets.yaml
-          kubectl apply -f k8s/configmap.yaml
+          kubectl apply -f deploy/k8s/namespace.yaml
+          kubectl apply -f deploy/k8s/secrets.yaml
+          kubectl apply -f deploy/k8s/configmap.yaml
 
       - name: Deploy infra
-        run: kubectl apply -f k8s/infra/
+        run: kubectl apply -f deploy/k8s/infra/
 
       - name: Deploy backend services
-        run: kubectl apply -f k8s/backend/
+        run: kubectl apply -f deploy/k8s/backend/
 
       - name: Deploy frontend
-        run: kubectl apply -f k8s/frontend/
+        run: kubectl apply -f deploy/k8s/frontend/
 
       - name: Apply ingress
-        run: kubectl apply -f k8s/ingress/ || true
+        run: kubectl apply -f deploy/k8s/ingress/ || true
 
       - name: Rollout restart all services
         run: |
           SERVICES=(
             auth-service product-service
             order-service payment-service shipping-service inventory-service
-            favourite-service rating-service notification-service media-service
-            search-service promotion-service tax-service frontend admin
+            rating-service notification-service media-service
+            search-service promotion-service frontend admin
           )
           for svc in "${SERVICES[@]}"; do
             kubectl rollout restart deployment/$svc -n ecommerce || true

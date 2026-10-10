@@ -206,7 +206,7 @@ export const getProducts = query(
 
 - **Dockerfiles** (`frontend/apps/{web,admin}/Dockerfile`): `docker.io/oven/bun:1` build stage → `bun install --frozen-lockfile && bun run build`; runtime stage copies only `build/` and runs `bun ./build` as the non-root `bun` user — the SSR bundle is self-contained (no production install needed). `frontend/.dockerignore` keeps `node_modules`, `.svelte-kit` and `build` out of the context. Both images were built and smoke-tested locally with Podman.
 - **Unchanged:** ports **3000 / 3001**, Dockerfile paths, CI build context `frontend/`, image names `frontend-web` / `frontend-admin`, k8s probes on `/` (SSR returns 200).
-- **k8s** (`k8s/frontend/*.yaml`): `API_INTERNAL_URL=http://apisix-gateway:9080`, `API_PUBLIC_URL`, `PROTOCOL_HEADER=x-forwarded-proto`.
+- **k8s** (`deploy/k8s/frontend/*.yaml`): `API_INTERNAL_URL=http://apisix-gateway:9080`, `API_PUBLIC_URL`, `PROTOCOL_HEADER=x-forwarded-proto`.
 - **compose:** `frontend` (image `frontend-web`) and `admin` services with `API_INTERNAL_URL=http://apisix:9080`, `API_PUBLIC_URL=http://localhost:9080` and `ORIGIN` set for plain-HTTP access.
 - **CI (`ci.yml`):** the `frontend-check` job runs `bun install --frozen-lockfile` → `check` → `lint` → `i18n:check` → `bun test` with `oven-sh/setup-bun`; the Docker build/push jobs are unchanged and gated behind it in `ci-success`.
 

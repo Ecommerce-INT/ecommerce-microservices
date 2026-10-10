@@ -32,21 +32,21 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $repoRoot
 
 $goModules = @(
-    "pkg/common",
-    "auth-service",
-    "product-service",
-    "order-service",
-    "payment-service",
-    "inventory-service",
-    "shipping-service",
-    "search-service"
+    "services/shared",
+    "services/auth-service",
+    "services/product-service",
+    "services/order-service",
+    "services/payment-service",
+    "services/inventory-service",
+    "services/shipping-service",
+    "services/search-service"
 )
 
 $bunServices = @(
-    "promotion-service",
-    "rating-service",
-    "media-service",
-    "notification-service"
+    "services/promotion-service",
+    "services/rating-service",
+    "services/media-service",
+    "services/notification-service"
 )
 
 $infraServices = @(
@@ -206,7 +206,7 @@ function Invoke-GoRun {
     if (-not $Service) {
         Fail "Usage: .\scripts\dev.ps1 go-run <module>   (e.g. product-service)"
     }
-    Push-Location $Service
+    Push-Location "services/$Service"
     go run .
     $code = $LASTEXITCODE
     Pop-Location
@@ -217,7 +217,7 @@ function Invoke-BunDev {
     if (-not $Service) {
         Fail "Usage: .\scripts\dev.ps1 bun-dev <service>   (e.g. rating-service)"
     }
-    Push-Location $Service
+    Push-Location "services/$Service"
     bun install
     if ($LASTEXITCODE -eq 0) {
         bun run dev
@@ -262,8 +262,8 @@ switch ($Task.ToLowerInvariant()) {
     }
     "images"         { docker compose build; Assert-LastExit "docker compose build" }
     "cluster-up"     {
-        $setupScript = Join-Path $repoRoot "k3d-setup.ps1"
-        if (-not (Test-Path $setupScript)) { Fail "k3d-setup.ps1 not found in the repository root" }
+        $setupScript = Join-Path $repoRoot "scripts\k3d-setup.ps1"
+        if (-not (Test-Path $setupScript)) { Fail "scripts\k3d-setup.ps1 not found" }
         if (Get-Command pwsh -ErrorAction SilentlyContinue) {
             pwsh -NoProfile -ExecutionPolicy Bypass -File $setupScript
         } else {

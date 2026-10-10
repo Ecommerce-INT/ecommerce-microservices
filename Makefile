@@ -11,8 +11,9 @@
 #   pwsh scripts/dev.ps1 go-run product-service
 # =============================================================================
 
-GO_MODULES     = pkg/common auth-service product-service order-service \
-                 payment-service inventory-service shipping-service search-service
+GO_MODULES     = services/shared services/auth-service services/product-service \
+                 services/order-service services/payment-service services/inventory-service \
+                 services/shipping-service services/search-service
 GO_PATTERNS    = $(addsuffix /...,$(addprefix ./,$(GO_MODULES)))
 BUN_SERVICES   = promotion-service rating-service media-service notification-service
 INFRA_SERVICES = postgres redis kafka elasticsearch rustfs keycloak apisix
@@ -63,7 +64,7 @@ go-tidy: ## go mod tidy in every module
 
 go-run: ## Run one Go service locally (SVC=product-service)
 	@test -n "$(SVC)" || { echo "Usage: make go-run SVC=<module>"; exit 1; }
-	cd $(SVC) && go run .
+	cd services/$(SVC) && go run .
 
 # =============================================================================
 # Bun services (4 services)
@@ -74,18 +75,18 @@ go-run: ## Run one Go service locally (SVC=product-service)
 bun-install: ## Install dependencies for the 4 Bun services
 	@for s in $(BUN_SERVICES); do \
 		echo "==> bun install: $$s"; \
-		(cd $$s && bun install) || exit 1; \
+		(cd services/$$s && bun install) || exit 1; \
 	done
 
 bun-test: bun-install ## Run tests for the 4 Bun services
 	@fail=0; for s in $(BUN_SERVICES); do \
 		echo "==> bun test: $$s"; \
-		(cd $$s && bun test) || fail=1; \
+		(cd services/$$s && bun test) || fail=1; \
 	done; exit $$fail
 
 bun-dev: ## Run one Bun service in watch mode (SVC=rating-service)
 	@test -n "$(SVC)" || { echo "Usage: make bun-dev SVC=<service>"; exit 1; }
-	cd $(SVC) && bun install && bun run dev
+	cd services/$(SVC) && bun install && bun run dev
 
 # =============================================================================
 # Frontend (Bun workspace — SvelteKit 5)
@@ -156,7 +157,7 @@ images: ## Build all Docker images without starting them
 .PHONY: cluster-up cluster-status cluster-down
 
 cluster-up: ## Create/refresh the k3d cluster and deploy the manifests (Docker or Podman)
-	bash k3d-setup.sh
+	bash scripts/k3d-setup.sh
 
 cluster-status: ## Show pods in the ecommerce namespace
 	kubectl get pods -n ecommerce -o wide

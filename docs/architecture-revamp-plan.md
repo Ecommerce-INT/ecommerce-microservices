@@ -310,29 +310,32 @@ All Kubernetes manifests, `k3d` bootstrap scripts, and ArgoCD configurations are
 ### 6.1 Application Monorepo (`ecommerce-microservices`)
 ```text
 ecommerce-microservices/
-├── apps/                           # Frontend Monorepo (Bun + SvelteKit 5)
-│   ├── web/                        # Storefront SSR app (:3000)
-│   └── admin/                      # Admin Backoffice SSR app (:3001)
-├── packages/                       # Shared Frontend/TS Packages
-│   ├── ui/                         # Svelte 5 shared components (Tailwind 4)
-│   ├── lib/                        # API client, shared types, schemas
-│   └── nats-events/                # Shared TypeScript NATS event contracts
-├── services/
-│   ├── bun/                        # 4 Bun/TypeScript Microservices
-│   │   ├── auth-service/           # Better-Auth + JWKS + Users (:8088)
-│   │   ├── media-service/          # Bun.S3Client + RustFS (:8083)
-│   │   ├── rating-service/         # Product Reviews & Ratings (:8089)
-│   │   └── notification-service/   # Email + SSE NATS Consumer (:8090)
-│   └── go/                         # 7 Go Microservices (Go Workspace)
-│       ├── pkg/                    # Shared Go libs (JWT/JWKS verifier, NATS helpers, telemetry)
-│       ├── product-service/        # Catalog + Favourites (:8086)
-│       ├── search-service/         # OpenSearch 3.9 indexer & Hybrid/RAG API (:8094)
-│       ├── inventory-service/      # Stock & checkout reservations (:8082)
-│       ├── promotion-service/      # Promotions, coupons & tax engine (:8093)
-│       ├── order-service/          # Cart, Orders, OrderItems & Saga (:8084)
-│       ├── payment-service/        # Payment intents & webhooks (:8085)
-│       └── shipping-service/       # Fulfillment, rates & tracking (:8087)
-├── deploy/compose/                 # Local Docker Compose configs (APISIX, OpenSearch, Valkey ACLs, PG18 init)
+├── frontend/                       # Frontend Monorepo (Bun workspace + SvelteKit 5)
+│   ├── apps/
+│   │   ├── web/                    # @ecommerce/web — Storefront SSR app (:3000)
+│   │   └── admin/                  # @ecommerce/admin — Admin Backoffice SSR app (:3001)
+│   └── packages/
+│       ├── ui/                     # @ecommerce/ui — Svelte 5 shared components (Tailwind 4)
+│       ├── lib/                    # @ecommerce/lib — API client, shared types, schemas
+│       └── nats-events/            # (planned) Shared TypeScript NATS event contracts
+├── services/                       # 11 microservices, flat — each runtime self-declared (go.mod vs package.json)
+│   ├── shared/                     # Shared Go module (JWT/JWKS verifier, NATS helpers, telemetry)
+│   ├── auth-service/               # Go → Better-Auth + JWKS + Users (:8088)
+│   ├── product-service/            # Go — Catalog + Favourites (:8086)
+│   ├── search-service/             # Go — OpenSearch 3.9 indexer & Hybrid/RAG API (:8094)
+│   ├── inventory-service/          # Go — Stock & checkout reservations (:8082)
+│   ├── promotion-service/          # Go — Promotions, coupons & tax engine (:8093)
+│   ├── order-service/              # Go — Cart, Orders, OrderItems & Saga (:8084)
+│   ├── payment-service/            # Go — Payment intents & webhooks (:8085)
+│   ├── shipping-service/           # Go — Fulfillment, rates & tracking (:8087)
+│   ├── media-service/              # Bun — Bun.S3Client + RustFS (:8083)
+│   ├── rating-service/             # Bun — Product Reviews & Ratings (:8089)
+│   └── notification-service/       # Bun — Email + SSE NATS Consumer (:8090)
+├── deploy/                         # Deployment configs
+│   ├── apisix/                     # Apache APISIX standalone config & routes
+│   ├── postgres/                   # Compose init assets — SQL bootstrap
+│   ├── keycloak/                   # Compose init assets — realm import
+│   └── k8s/                        # K8s manifests (until extracted to ecommerce-gitops)
 ├── tests/
 │   └── k6/                         # Extensive k6 Performance, Chaos & Metrics Benchmark Suite
 │       ├── lib/                    # Shared auth helpers, data generators, custom Trend/Rate/Counter metrics
@@ -340,8 +343,11 @@ ecommerce-microservices/
 │       ├── profiles/               # smoke.json, load.json, stress.json, spike.json
 │       ├── scripts/                # Bun harness: seed data + collect Docker/K8s RAM/CPU + run k6 + diff report
 │       └── reports/                # Generated JSON & Markdown Before-vs-After benchmark reports
+├── scripts/                        # Dev & bootstrap scripts (dev.ps1, k3d-setup.*, start-ecommerce.*)
 ├── docs/
 │   └── architecture-revamp-plan.md # This document
+├── go.work                         # Go workspace (7 Go modules + shared)
+├── Makefile
 └── docker-compose.yml              # Fast non-K8s local dev stack
 ```
 
@@ -444,7 +450,7 @@ Each scenario supports 4 execution profiles via `-e PROFILE=smoke|load|stress|sp
 3. Run the baseline benchmark against the existing stack (documenting existing latency, memory footprint, and broken endpoint error rates) so every subsequent phase is verified against hard numbers.
 
 ### Phase 1: Infrastructure, Shared Contracts & `ecommerce-gitops` Bootstrap
-1. Update `docker-compose.yml` in `ecommerce-microservices` with **PostgreSQL 18**, **Valkey 9.1** (with `db0`–`db4` ACLs), **NATS 2.10 (`-js`)**, **RustFS**, **OpenSearch 3.9**, and **APISIX 3.19**, and remove legacy `k8s/`, `k3d-setup.sh`, and `k3d-config.yaml`.
+1. Update `docker-compose.yml` in `ecommerce-microservices` with **PostgreSQL 18**, **Valkey 9.1** (with `db0`–`db4` ACLs), **NATS 2.10 (`-js`)**, **RustFS**, **OpenSearch 3.9**, and **APISIX 3.19**, and remove the legacy K8s manifests and k3d bootstrap scripts (currently under `deploy/k8s/` and `scripts/`).
 2. Scaffold the dedicated **`ecommerce-gitops`** repository with **Cilium 1.20 eBPF** (`kubeProxyReplacement=true`), **OpenEBS LocalPV CSI**, **CloudNativePG (PG 18)**, **APISIX Gateway API v1**, **ArgoCD `ApplicationSet`**, and the **`charts/ecommerce-service` Helm Monochart**.
 3. Create shared event schemas for `catalog.*` and `orders.*` NATS subjects, plus shared JWKS middleware for Go and Bun.
 

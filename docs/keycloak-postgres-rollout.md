@@ -23,7 +23,7 @@ Set tối thiểu các biến môi trường sau trước khi chạy:
 
 ## 2.1) Boot Keycloak with preloaded realm
 
-Repo đã có sẵn realm import mẫu tại `docker/keycloak/import/ecommerce-realm.json`.
+Repo đã có sẵn realm import mẫu tại `deploy/keycloak/import/ecommerce-realm.json`.
 
 Chạy Keycloak local:
 
@@ -64,7 +64,7 @@ Converter hiện tại chấp nhận cả `ROLE_ADMIN` và `ADMIN` để tương
 
 ## 5) Quick verification checklist
 
-- [ ] `mvn -DskipTests compile` pass toàn repo.
+- [ ] `go build ./services/...` pass toàn repo.
 - [ ] Keycloak realm có đủ roles (`ADMIN`, `USER`, `MANAGER`).
 - [ ] User test đã được gán role đúng.
 - [ ] Token từ Keycloak gọi được endpoint qua gateway.
