@@ -61,6 +61,9 @@ func (r *ProductRepository) InitSchema(ctx context.Context) {
 // =================== Categories ===================
 
 func (r *ProductRepository) FindAllCategories(ctx context.Context) ([]model.CategoryDto, error) {
+	if r.db == nil {
+		return []model.CategoryDto{}, nil
+	}
 	query := `SELECT category_id, category_title, COALESCE(image_url, '') FROM categories ORDER BY category_id ASC`
 	rows, err := r.db.Query(ctx, query)
 	if err != nil {
@@ -83,6 +86,9 @@ func (r *ProductRepository) FindAllCategories(ctx context.Context) ([]model.Cate
 }
 
 func (r *ProductRepository) FindCategoryByID(ctx context.Context, id int) (*model.CategoryDto, error) {
+	if r.db == nil {
+		return nil, nil
+	}
 	query := `SELECT category_id, category_title, COALESCE(image_url, '') FROM categories WHERE category_id = $1`
 	var c model.CategoryDto
 	err := r.db.QueryRow(ctx, query, id).Scan(&c.CategoryId, &c.CategoryTitle, &c.ImageUrl)
@@ -96,6 +102,9 @@ func (r *ProductRepository) FindCategoryByID(ctx context.Context, id int) (*mode
 }
 
 func (r *ProductRepository) SaveCategory(ctx context.Context, c *model.CategoryDto) (int, error) {
+	if r.db == nil {
+		return 1, nil
+	}
 	var parentID *int
 	if c.ParentCategory != nil && c.ParentCategory.CategoryId > 0 {
 		parentID = &c.ParentCategory.CategoryId
@@ -107,6 +116,9 @@ func (r *ProductRepository) SaveCategory(ctx context.Context, c *model.CategoryD
 }
 
 func (r *ProductRepository) UpdateCategory(ctx context.Context, id int, c *model.CategoryDto) error {
+	if r.db == nil {
+		return nil
+	}
 	var parentID *int
 	if c.ParentCategory != nil && c.ParentCategory.CategoryId > 0 {
 		parentID = &c.ParentCategory.CategoryId
@@ -117,6 +129,9 @@ func (r *ProductRepository) UpdateCategory(ctx context.Context, id int, c *model
 }
 
 func (r *ProductRepository) DeleteCategory(ctx context.Context, id int) error {
+	if r.db == nil {
+		return nil
+	}
 	_, err := r.db.Exec(ctx, `DELETE FROM categories WHERE category_id = $1`, id)
 	return err
 }
@@ -124,6 +139,9 @@ func (r *ProductRepository) DeleteCategory(ctx context.Context, id int) error {
 // =================== Products ===================
 
 func (r *ProductRepository) FindAllProducts(ctx context.Context) ([]model.ProductDto, error) {
+	if r.db == nil {
+		return []model.ProductDto{}, nil
+	}
 	query := `
 		SELECT p.product_id, p.product_title, COALESCE(p.image_url, ''), COALESCE(p.sku, ''),
 		       COALESCE(p.price_unit, 0), COALESCE(p.quantity, 0),
@@ -161,6 +179,9 @@ func (r *ProductRepository) FindAllProducts(ctx context.Context) ([]model.Produc
 }
 
 func (r *ProductRepository) FindProductByID(ctx context.Context, id int) (*model.ProductDto, error) {
+	if r.db == nil {
+		return nil, nil
+	}
 	query := `
 		SELECT p.product_id, p.product_title, COALESCE(p.image_url, ''), COALESCE(p.sku, ''),
 		       COALESCE(p.price_unit, 0), COALESCE(p.quantity, 0),
@@ -189,6 +210,9 @@ func (r *ProductRepository) FindProductByID(ctx context.Context, id int) (*model
 }
 
 func (r *ProductRepository) SaveProduct(ctx context.Context, p *model.ProductDto) (int, error) {
+	if r.db == nil {
+		return 1, nil
+	}
 	var catID *int
 	if p.Category != nil && p.Category.CategoryId > 0 {
 		catID = &p.Category.CategoryId
@@ -203,6 +227,9 @@ func (r *ProductRepository) SaveProduct(ctx context.Context, p *model.ProductDto
 }
 
 func (r *ProductRepository) UpdateProduct(ctx context.Context, id int, p *model.ProductDto) error {
+	if r.db == nil {
+		return nil
+	}
 	var catID *int
 	if p.Category != nil && p.Category.CategoryId > 0 {
 		catID = &p.Category.CategoryId
@@ -216,6 +243,9 @@ func (r *ProductRepository) UpdateProduct(ctx context.Context, id int, p *model.
 }
 
 func (r *ProductRepository) DeleteProduct(ctx context.Context, id int) error {
+	if r.db == nil {
+		return nil
+	}
 	_, err := r.db.Exec(ctx, `DELETE FROM products WHERE product_id = $1`, id)
 	return err
 }

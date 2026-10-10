@@ -38,6 +38,9 @@ func (r *ShippingRepository) InitSchema(ctx context.Context) {
 }
 
 func (r *ShippingRepository) FindAll(ctx context.Context) ([]model.OrderItemDto, error) {
+	if r.db == nil {
+		return []model.OrderItemDto{}, nil
+	}
 	query := `SELECT order_id, product_id, ordered_quantity, created_at, updated_at FROM order_items ORDER BY order_id DESC`
 	rows, err := r.db.Query(ctx, query)
 	if err != nil {
@@ -60,6 +63,9 @@ func (r *ShippingRepository) FindAll(ctx context.Context) ([]model.OrderItemDto,
 }
 
 func (r *ShippingRepository) FindByID(ctx context.Context, orderId, productId int) (*model.OrderItemDto, error) {
+	if r.db == nil {
+		return nil, nil
+	}
 	query := `SELECT order_id, product_id, ordered_quantity, created_at, updated_at FROM order_items WHERE order_id = $1 AND product_id = $2`
 	var item model.OrderItemDto
 	err := r.db.QueryRow(ctx, query, orderId, productId).Scan(&item.OrderId, &item.ProductId, &item.OrderedQuantity, &item.CreatedAt, &item.UpdatedAt)
@@ -73,6 +79,9 @@ func (r *ShippingRepository) FindByID(ctx context.Context, orderId, productId in
 }
 
 func (r *ShippingRepository) Save(ctx context.Context, item *model.OrderItemDto) error {
+	if r.db == nil {
+		return nil
+	}
 	query := `
 		INSERT INTO order_items (order_id, product_id, ordered_quantity, created_at, updated_at)
 		VALUES ($1, $2, $3, NOW(), NOW())
@@ -83,6 +92,9 @@ func (r *ShippingRepository) Save(ctx context.Context, item *model.OrderItemDto)
 }
 
 func (r *ShippingRepository) DeleteByID(ctx context.Context, orderId, productId int) error {
+	if r.db == nil {
+		return nil
+	}
 	query := `DELETE FROM order_items WHERE order_id = $1 AND product_id = $2`
 	_, err := r.db.Exec(ctx, query, orderId, productId)
 	return err

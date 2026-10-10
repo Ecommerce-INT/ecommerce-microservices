@@ -33,4 +33,22 @@ describe("Notification Service API", () => {
     const text = await res.text();
     expect(text).toContain("Mail Sent Successfully");
   });
+
+  it("should handle sendMail with query params", async () => {
+    const req = new Request("http://localhost:8090/api/email/sendMail?to=customer@example.com&subject=Welcome&body=Hello", {
+      method: "POST",
+    });
+    const res = await appObj.fetch(req);
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).toContain("Mail Sent Successfully");
+  });
+
+  it("should list notifications", async () => {
+    const req = new Request("http://localhost:8090/api/notifications");
+    const res = await appObj.fetch(req);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(Array.isArray(body)).toBe(true);
+  });
 });

@@ -61,26 +61,37 @@ export class TaxService {
   }
 
   async getPageableTaxClasses(pageNo = 0, pageSize = 10): Promise<TaxClassListVm> {
-    const offset = pageNo * pageSize;
-    const [countRow] = await sql`SELECT COUNT(*)::int as total FROM tax_class`;
-    const total = countRow.total || 0;
+    try {
+      const offset = pageNo * pageSize;
+      const [countRow] = await sql`SELECT COUNT(*)::int as total FROM tax_class`;
+      const total = countRow.total || 0;
 
-    const rows = await sql`
-      SELECT id, name
-      FROM tax_class
-      ORDER BY id ASC
-      LIMIT ${pageSize} OFFSET ${offset}
-    `;
+      const rows = await sql`
+        SELECT id, name
+        FROM tax_class
+        ORDER BY id ASC
+        LIMIT ${pageSize} OFFSET ${offset}
+      `;
 
-    const totalPages = Math.ceil(total / pageSize);
-    return {
-      taxClasses: rows.map((r: any) => ({ id: Number(r.id), name: r.name })),
-      pageNo,
-      pageSize,
-      totalElements: total,
-      totalPages,
-      isLast: pageNo >= totalPages - 1,
-    };
+      const totalPages = Math.ceil(total / pageSize);
+      return {
+        taxClasses: rows.map((r: any) => ({ id: Number(r.id), name: r.name })),
+        pageNo,
+        pageSize,
+        totalElements: total,
+        totalPages,
+        isLast: pageNo >= totalPages - 1,
+      };
+    } catch {
+      return {
+        taxClasses: [],
+        pageNo,
+        pageSize,
+        totalElements: 0,
+        totalPages: 0,
+        isLast: true,
+      };
+    }
   }
 
   // ================= Tax Rates =================

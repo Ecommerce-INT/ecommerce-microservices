@@ -33,7 +33,7 @@ func (r *InventoryRepository) InitSchema(ctx context.Context) {
 }
 
 func (r *InventoryRepository) FindByProductNames(ctx context.Context, productNames []string) ([]model.Inventory, error) {
-	if len(productNames) == 0 {
+	if r.db == nil || len(productNames) == 0 {
 		return []model.Inventory{}, nil
 	}
 

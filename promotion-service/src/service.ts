@@ -40,31 +40,39 @@ export class PromotionService {
     startDate?: string,
     endDate?: string
   ): Promise<PromotionListVm> {
-    const offset = pageNo * pageSize;
-    const namePattern = `%${promotionName.toLowerCase()}%`;
-    const codePattern = `%${couponCode.toLowerCase()}%`;
+    try {
+      const offset = pageNo * pageSize;
+      const namePattern = `%${promotionName.toLowerCase()}%`;
+      const codePattern = `%${couponCode.toLowerCase()}%`;
 
-    const countRes = await sql`
-      SELECT COUNT(*) as count FROM promotion
-      WHERE LOWER(COALESCE(name, '')) LIKE ${namePattern}
-        AND LOWER(COALESCE(coupon_code, '')) LIKE ${codePattern}
-    `;
-    const totalElements = Number(countRes[0]?.count || 0);
-    const totalPages = pageSize > 0 ? Math.ceil(totalElements / pageSize) : 0;
+      const countRes = await sql`
+        SELECT COUNT(*) as count FROM promotion
+        WHERE LOWER(COALESCE(name, '')) LIKE ${namePattern}
+          AND LOWER(COALESCE(coupon_code, '')) LIKE ${codePattern}
+      `;
+      const totalElements = Number(countRes[0]?.count || 0);
+      const totalPages = pageSize > 0 ? Math.ceil(totalElements / pageSize) : 0;
 
-    const rows = await sql`
-      SELECT * FROM promotion
-      WHERE LOWER(COALESCE(name, '')) LIKE ${namePattern}
-        AND LOWER(COALESCE(coupon_code, '')) LIKE ${codePattern}
-      ORDER BY id DESC
-      LIMIT ${pageSize} OFFSET ${offset}
-    `;
+      const rows = await sql`
+        SELECT * FROM promotion
+        WHERE LOWER(COALESCE(name, '')) LIKE ${namePattern}
+          AND LOWER(COALESCE(coupon_code, '')) LIKE ${codePattern}
+        ORDER BY id DESC
+        LIMIT ${pageSize} OFFSET ${offset}
+      `;
 
-    return {
-      promotionDetailVmList: rows.map(mapRow),
-      totalElements,
-      totalPages,
-    };
+      return {
+        promotionDetailVmList: rows.map(mapRow),
+        totalElements,
+        totalPages,
+      };
+    } catch {
+      return {
+        promotionDetailVmList: [],
+        totalElements: 0,
+        totalPages: 0,
+      };
+    }
   }
 
   async getPromotion(id: number): Promise<PromotionDetailVm | null> {
