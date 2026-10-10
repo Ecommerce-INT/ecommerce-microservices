@@ -31,13 +31,13 @@ func (s *SearchService) FindProductAdvance(
 ) (*model.ProductListGetVm, error) {
 	if s.es == nil {
 		return &model.ProductListGetVm{
-			Products:     []model.ProductGetVm{},
-			PageNo:       page,
-			PageSize:     size,
+			Products:      []model.ProductGetVm{},
+			PageNo:        page,
+			PageSize:      size,
 			TotalElements: 0,
-			TotalPages:   0,
-			IsLast:       true,
-			Aggregations: map[string]map[string]int{},
+			TotalPages:    0,
+			IsLast:        true,
+			Aggregations:  map[string]map[string]int{},
 		}, nil
 	}
 
@@ -117,13 +117,13 @@ func (s *SearchService) FindProductAdvance(
 	if err != nil {
 		log.Printf("[Search Service] Warning: ES Search failed: %v", err)
 		return &model.ProductListGetVm{
-			Products:     []model.ProductGetVm{},
-			PageNo:       page,
-			PageSize:     size,
+			Products:      []model.ProductGetVm{},
+			PageNo:        page,
+			PageSize:      size,
 			TotalElements: 0,
-			TotalPages:   0,
-			IsLast:       true,
-			Aggregations: map[string]map[string]int{},
+			TotalPages:    0,
+			IsLast:        true,
+			Aggregations:  map[string]map[string]int{},
 		}, nil
 	}
 	defer res.Body.Close()

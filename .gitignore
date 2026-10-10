@@ -75,6 +75,7 @@ files
 ### Node / Bun ###
 node_modules/
 bun.lockb
+bun.lock
 
 ### Go ###
 *.exe

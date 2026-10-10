@@ -1,74 +1,45 @@
 @echo off
 :: =============================================================================
-:: start-ecommerce.bat — One-shot local deployment for Windows
+:: start-ecommerce.bat — One-shot local K8s deployment for Windows.
 ::
-:: Requires: Docker Desktop + Git Bash OR WSL
+:: Works with Docker Desktop or Podman (auto-detected; Docker wins when both
+:: are running). Force a runtime:
+::   start-ecommerce.bat -Runtime podman
 ::
-:: Usage: Double-click this file, or run in CMD/PowerShell:
-::   .\start-ecommerce.bat
+:: Launches k3d-setup.ps1, which installs k3d/kubectl if missing.
 :: =============================================================================
 
+chcp 65001 >nul 2>&1
 title Ecommerce Microservices — K8s Setup
 
 echo.
 echo  ╔══════════════════════════════════════════════════════════╗
 echo  ║     Ecommerce Microservices ^· Local K8s Setup           ║
-echo  ║     k3d  +  k3s  +  NGINX Ingress                        ║
+echo  ║     Docker or Podman  ^+  k3d  ^+  NGINX Ingress           ║
 echo  ╚══════════════════════════════════════════════════════════╝
 echo.
 
-:: ── Check Docker ─────────────────────────────────────────────────────────────
-where docker >nul 2>&1
-if %errorlevel% neq 0 (
-    echo  [ERROR] Docker not found.
-    echo          Install Docker Desktop: https://www.docker.com/get-started
-    pause
-    exit /b 1
-)
-
-docker info >nul 2>&1
-if %errorlevel% neq 0 (
-    echo  [ERROR] Docker is not running.
-    echo          Please start Docker Desktop and try again.
-    pause
-    exit /b 1
-)
-echo  [OK]  Docker is running
-
-:: ── Try Git Bash first ────────────────────────────────────────────────────────
-set GITBASH=
-for %%p in (
-    "C:\Program Files\Git\bin\bash.exe"
-    "C:\Program Files\Git\usr\bin\bash.exe"
-    "%LOCALAPPDATA%\Programs\Git\bin\bash.exe"
-) do (
-    if exist %%p (
-        set GITBASH=%%p
-        goto :found_gitbash
-    )
-)
-
-:: ── Try WSL ──────────────────────────────────────────────────────────────────
-where wsl >nul 2>&1
+:: ── Locate PowerShell (prefer pwsh 7+, fallback to Windows PowerShell 5.1) ──
+where pwsh >nul 2>&1
 if %errorlevel% equ 0 (
-    echo  [OK]  Using WSL to run setup...
+    echo  [OK]  Launching k3d-setup.ps1 via PowerShell 7 ^(pwsh^)...
     echo.
-    wsl bash k3d-setup.sh
+    pwsh -NoProfile -ExecutionPolicy Bypass -File "%~dp0k3d-setup.ps1" %*
     goto :done
 )
 
-echo  [ERROR] Neither Git Bash nor WSL found.
-echo          Please install one of:
-echo          - Git for Windows: https://git-scm.com/download/win
-echo          - WSL:  wsl --install  (in PowerShell as Administrator)
+where powershell >nul 2>&1
+if %errorlevel% equ 0 (
+    echo  [OK]  Launching k3d-setup.ps1 via Windows PowerShell...
+    echo.
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0k3d-setup.ps1" %*
+    goto :done
+)
+
+echo  [ERROR] PowerShell not found on this system.
+echo          Windows 10/11 ships Windows PowerShell 5.1 by default.
 pause
 exit /b 1
-
-:found_gitbash
-echo  [OK]  Using Git Bash: %GITBASH%
-echo.
-%GITBASH% -c "bash k3d-setup.sh"
-goto :done
 
 :done
 echo.

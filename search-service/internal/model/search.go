@@ -32,13 +32,13 @@ type ProductGetVm struct {
 }
 
 type ProductListGetVm struct {
-	Products     []ProductGetVm            `json:"products"`
-	PageNo       int                       `json:"pageNo"`
-	PageSize     int                       `json:"pageSize"`
+	Products      []ProductGetVm            `json:"products"`
+	PageNo        int                       `json:"pageNo"`
+	PageSize      int                       `json:"pageSize"`
 	TotalElements int64                     `json:"totalElements"`
-	TotalPages   int                       `json:"totalPages"`
-	IsLast       bool                      `json:"isLast"`
-	Aggregations map[string]map[string]int `json:"aggregations"`
+	TotalPages    int                       `json:"totalPages"`
+	IsLast        bool                      `json:"isLast"`
+	Aggregations  map[string]map[string]int `json:"aggregations"`
 }
 
 type ProductNameGetVm struct {

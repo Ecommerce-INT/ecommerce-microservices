@@ -11,12 +11,12 @@ import (
 )
 
 var (
-	ErrUserNotFound    = errors.New("user not found")
-	ErrUsernameExists  = errors.New("username already exists")
-	ErrEmailExists     = errors.New("email already exists")
-	ErrPhoneExists     = errors.New("phone already exists")
-	ErrRoleNotFound    = errors.New("role not found")
-	ErrRoleConflict    = errors.New("role assignment conflict")
+	ErrUserNotFound   = errors.New("user not found")
+	ErrUsernameExists = errors.New("username already exists")
+	ErrEmailExists    = errors.New("email already exists")
+	ErrPhoneExists    = errors.New("phone already exists")
+	ErrRoleNotFound   = errors.New("role not found")
+	ErrRoleConflict   = errors.New("role assignment conflict")
 )
 
 type UserService struct {

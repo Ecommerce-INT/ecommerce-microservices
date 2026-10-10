@@ -11,7 +11,7 @@ import (
 )
 
 var (
-	ErrPaymentNotFound = errors.New("payment not found")
+	ErrPaymentNotFound  = errors.New("payment not found")
 	ErrOrderAlreadyPaid = errors.New("Order has already been paid.")
 )
 
