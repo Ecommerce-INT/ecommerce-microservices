@@ -37,6 +37,35 @@ spec:
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
+        - name: create-storage-bucket
+          image: minio/mc:latest
+          command:
+            - sh
+            - -c
+            - mc alias set local http://rustfs:9000 '$STORAGE_ACCESS_KEY' '$STORAGE_SECRET_KEY' && mc mb --ignore-existing local/$STORAGE_BUCKET
+          envFrom:
+            - configMapRef:
+                name: ecommerce-config
+          env:
+            - name: HOME
+              value: /tmp
+            - name: MC_CONFIG_DIR
+              value: /tmp/mc
+            - name: STORAGE_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: storage-secret
+                  key: STORAGE_ACCESS_KEY
+            - name: STORAGE_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: storage-secret
+                  key: STORAGE_SECRET_KEY
+          securityContext:
+            runAsUser: 65534
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
       securityContext:
         seccompProfile:
           type: RuntimeDefault

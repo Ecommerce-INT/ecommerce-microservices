@@ -77,5 +77,8 @@ node_modules/
 bun.lockb
 bun.lock
 
+### Drizzle-kit output (generated locally, not used at runtime) ###
+*/drizzle/
+
 ### Go ###
 *.exe
