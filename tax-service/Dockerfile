@@ -1,4 +1,4 @@
-FROM golang:1.23-alpine AS builder
+FROM golang:alpine AS builder
 
 WORKDIR /app
 
@@ -10,7 +10,7 @@ COPY go.work ./go.work
 WORKDIR /app/tax-service
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /tax-service main.go
 
-FROM alpine:3.20
+FROM alpine:latest
 
 RUN apk --no-cache add ca-certificates tzdata
 

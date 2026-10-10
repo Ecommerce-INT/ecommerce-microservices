@@ -1,6 +1,6 @@
 module com.ecommerce/tax-service
 
-go 1.23.0
+go 1.23
 
 require (
 	com.ecommerce/pkg/common v0.0.0
