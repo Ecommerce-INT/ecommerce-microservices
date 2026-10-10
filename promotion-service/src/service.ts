@@ -1,42 +1,45 @@
-import { sql } from "./db";
-import type { PromotionDetailVm, PromotionListVm, PromotionPostVm, PromotionPutVm } from "./types";
+import { and, count, desc, eq, sql } from 'drizzle-orm';
+import { db } from './db';
+import { promotion } from './schema';
+import type { PromotionDetailVm, PromotionListVm, PromotionPostVm, PromotionPutVm } from './types';
 
-function mapRow(r: any): PromotionDetailVm {
+function mapRow(r: typeof promotion.$inferSelect): PromotionDetailVm {
   return {
-    id: Number(r.id),
-    name: r.name || "",
-    slug: r.slug || "",
-    description: r.description || "",
-    couponCode: r.coupon_code || "",
-    usageLimit: Number(r.usage_limit || 0),
-    usageCount: Number(r.usage_count || 0),
-    discountType: r.discount_type || "PERCENTAGE",
-    applyTo: r.apply_to || "ALL",
-    usageType: r.usage_type || "UNLIMITED",
-    discountPercentage: Number(r.discount_percentage || 0),
-    discountAmount: Number(r.discount_amount || 0),
-    isActive: Boolean(r.is_active),
-    startDate: r.start_date instanceof Date ? r.start_date.toISOString() : (r.start_date || null),
-    endDate: r.end_date instanceof Date ? r.end_date.toISOString() : (r.end_date || null),
+    id: r.id,
+    name: r.name || '',
+    slug: r.slug || '',
+    description: r.description || '',
+    couponCode: r.couponCode || '',
+    usageLimit: Number(r.usageLimit || 0),
+    usageCount: Number(r.usageCount || 0),
+    discountType: r.discountType || 'PERCENTAGE',
+    applyTo: r.applyTo || 'ALL',
+    usageType: r.usageType || 'UNLIMITED',
+    discountPercentage: Number(r.discountPercentage || 0),
+    discountAmount: Number(r.discountAmount || 0),
+    isActive: Boolean(r.isActive),
+    startDate:
+      r.startDate instanceof Date ? r.startDate.toISOString() : r.startDate || null,
+    endDate: r.endDate instanceof Date ? r.endDate.toISOString() : r.endDate || null,
     brands: [],
     categories: [],
-    products: [],
+    products: []
   };
 }
 
 function slugify(text: string): string {
   return text
     .toLowerCase()
-    .replace(/[^\w ]+/g, "")
-    .replace(/ +/g, "-");
+    .replace(/[^\w ]+/g, '')
+    .replace(/ +/g, '-');
 }
 
 export class PromotionService {
   async getPromotions(
     pageNo: number,
     pageSize: number,
-    promotionName = "",
-    couponCode = "",
+    promotionName = '',
+    couponCode = '',
     startDate?: string,
     endDate?: string
   ): Promise<PromotionListVm> {
@@ -45,87 +48,94 @@ export class PromotionService {
       const namePattern = `%${promotionName.toLowerCase()}%`;
       const codePattern = `%${couponCode.toLowerCase()}%`;
 
-      const countRes = await sql`
-        SELECT COUNT(*) as count FROM promotion
-        WHERE LOWER(COALESCE(name, '')) LIKE ${namePattern}
-          AND LOWER(COALESCE(coupon_code, '')) LIKE ${codePattern}
-      `;
-      const totalElements = Number(countRes[0]?.count || 0);
+      const filter = and(
+        sql`LOWER(COALESCE(${promotion.name}, '')) LIKE ${namePattern}`,
+        sql`LOWER(COALESCE(${promotion.couponCode}, '')) LIKE ${codePattern}`
+      );
+
+      const [countRow] = await db.select({ total: count() }).from(promotion).where(filter);
+      const totalElements = Number(countRow?.total ?? 0);
       const totalPages = pageSize > 0 ? Math.ceil(totalElements / pageSize) : 0;
 
-      const rows = await sql`
-        SELECT * FROM promotion
-        WHERE LOWER(COALESCE(name, '')) LIKE ${namePattern}
-          AND LOWER(COALESCE(coupon_code, '')) LIKE ${codePattern}
-        ORDER BY id DESC
-        LIMIT ${pageSize} OFFSET ${offset}
-      `;
+      const rows = await db
+        .select()
+        .from(promotion)
+        .where(filter)
+        .orderBy(desc(promotion.id))
+        .limit(pageSize)
+        .offset(offset);
 
       return {
         promotionDetailVmList: rows.map(mapRow),
         totalElements,
-        totalPages,
+        totalPages
       };
     } catch {
       return {
         promotionDetailVmList: [],
         totalElements: 0,
-        totalPages: 0,
+        totalPages: 0
       };
     }
   }
 
   async getPromotion(id: number): Promise<PromotionDetailVm | null> {
-    const rows = await sql`SELECT * FROM promotion WHERE id = ${id}`;
+    const rows = await db.select().from(promotion).where(eq(promotion.id, id));
     if (rows.length === 0) return null;
     return mapRow(rows[0]);
   }
 
   async createPromotion(req: PromotionPostVm): Promise<PromotionDetailVm> {
     const slug = req.slug || slugify(req.name);
-    const rows = await sql`
-      INSERT INTO promotion (
-        name, slug, description, coupon_code, usage_limit,
-        discount_type, apply_to, usage_type, discount_percentage, discount_amount,
-        is_active, start_date, end_date, created_on, last_modified_on
-      ) VALUES (
-        ${req.name}, ${slug}, ${req.description}, ${req.couponCode}, ${req.usageLimit},
-        ${req.discountType}, ${req.applyTo}, ${req.usageType}, ${req.discountPercentage}, ${req.discountAmount},
-        ${req.isActive}, ${req.startDate ? new Date(req.startDate) : null}, ${req.endDate ? new Date(req.endDate) : null},
-        CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
-      )
-      RETURNING *
-    `;
+    const [row] = await db
+      .insert(promotion)
+      .values({
+        name: req.name,
+        slug,
+        description: req.description,
+        couponCode: req.couponCode,
+        usageLimit: req.usageLimit,
+        discountType: req.discountType,
+        applyTo: req.applyTo,
+        usageType: req.usageType,
+        discountPercentage: req.discountPercentage,
+        discountAmount: req.discountAmount,
+        isActive: req.isActive,
+        startDate: req.startDate ? new Date(req.startDate) : null,
+        endDate: req.endDate ? new Date(req.endDate) : null
+      })
+      .returning();
 
-    return mapRow(rows[0]);
+    return mapRow(row);
   }
 
   async updatePromotion(req: PromotionPutVm): Promise<PromotionDetailVm> {
     const slug = req.slug || slugify(req.name);
-    const rows = await sql`
-      UPDATE promotion
-      SET name = ${req.name},
-          slug = ${slug},
-          description = ${req.description},
-          coupon_code = ${req.couponCode},
-          usage_limit = ${req.usageLimit},
-          discount_type = ${req.discountType},
-          apply_to = ${req.applyTo},
-          usage_type = ${req.usageType},
-          discount_percentage = ${req.discountPercentage},
-          discount_amount = ${req.discountAmount},
-          is_active = ${req.isActive},
-          start_date = ${req.startDate ? new Date(req.startDate) : null},
-          end_date = ${req.endDate ? new Date(req.endDate) : null},
-          last_modified_on = CURRENT_TIMESTAMP
-      WHERE id = ${req.id}
-      RETURNING *
-    `;
+    const [row] = await db
+      .update(promotion)
+      .set({
+        name: req.name,
+        slug,
+        description: req.description,
+        couponCode: req.couponCode,
+        usageLimit: req.usageLimit,
+        discountType: req.discountType,
+        applyTo: req.applyTo,
+        usageType: req.usageType,
+        discountPercentage: req.discountPercentage,
+        discountAmount: req.discountAmount,
+        isActive: req.isActive,
+        startDate: req.startDate ? new Date(req.startDate) : null,
+        endDate: req.endDate ? new Date(req.endDate) : null,
+        lastModifiedOn: sql`CURRENT_TIMESTAMP`
+      })
+      .where(eq(promotion.id, req.id))
+      .returning();
 
-    return mapRow(rows[0]);
+    return mapRow(row);
   }
 
   async deletePromotion(id: number): Promise<void> {
-    await sql`DELETE FROM promotion WHERE id = ${id}`;
+    await db.delete(promotion).where(eq(promotion.id, id));
   }
 }

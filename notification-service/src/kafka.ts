@@ -1,6 +1,7 @@
 import { Kafka } from "kafkajs";
+import { db } from "./db";
 import { sendEmail } from "./mailer";
-import { sql } from "./db";
+import { paymentNotifications } from "./schema";
 
 const kafkaBrokers = (process.env.KAFKA_SERVERS || "localhost:9092").split(",");
 const clientId = "notification-service";
@@ -38,14 +39,14 @@ export async function initKafka() {
             });
           } else if (topic === "status-payment-successful") {
             const payment = JSON.parse(raw);
-            await sql`
-              INSERT INTO payment_notifications (
-                payment_id, user_id, order_id, amount, is_payed, payment_status
-              ) VALUES (
-                ${payment.paymentId || null}, ${payment.userId || null}, ${payment.orderId || null},
-                ${payment.amount || 0}, ${payment.isPayed ?? true}, ${payment.paymentStatus || "SUCCESS"}
-              )
-            `;
+            await db.insert(paymentNotifications).values({
+              paymentId: payment.paymentId || null,
+              userId: payment.userId || null,
+              orderId: payment.orderId || null,
+              amount: String(payment.amount || 0),
+              isPayed: payment.isPayed ?? true,
+              paymentStatus: payment.paymentStatus || "SUCCESS"
+            });
 
             await sendEmail({
               recipient: "hoangtien2k3dev@gmail.com",
