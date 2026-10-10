@@ -4,9 +4,9 @@
 	import { toast } from 'svelte-sonner';
 	import { formatPrice } from '@ecommerce/lib/format';
 	import { shippingSchema } from '@ecommerce/lib/schemas';
-	import { m } from '$lib/paraglide/messages.js';
-	import { localizeHref } from '$lib/paraglide/runtime.js';
-	import { cart } from '$lib/stores/cart.svelte';
+	import { m } from '#lib/paraglide/messages.js';
+	import { localizeHref } from '#lib/paraglide/runtime.js';
+	import { cart } from '#lib/stores/cart.svelte';
 	import { Button } from '@ecommerce/ui/button';
 	import { Input } from '@ecommerce/ui/input';
 	import { Label } from '@ecommerce/ui/label';

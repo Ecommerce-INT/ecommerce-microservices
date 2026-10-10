@@ -1,5 +1,5 @@
 import { query } from '$app/server';
-import { api } from '$lib/server/api';
+import { api } from '#lib/server/api';
 
 /**
  * Dashboard aggregates. Counts come from the paginated endpoints

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { ShieldCheck } from '@lucide/svelte';
-	import { m } from '$lib/paraglide/messages.js';
+	import { m } from '#lib/paraglide/messages.js';
 	import { Button } from '@ecommerce/ui/button';
 	import type { PageProps } from './$types';
 

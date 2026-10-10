@@ -1,10 +1,10 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { ChevronRight, Flame, RefreshCw, ShieldCheck, Truck } from '@lucide/svelte';
-	import { m } from '$lib/paraglide/messages.js';
-	import { localizeHref } from '$lib/paraglide/runtime.js';
+	import { m } from '#lib/paraglide/messages.js';
+	import { localizeHref } from '#lib/paraglide/runtime.js';
 	import { Badge } from '@ecommerce/ui/badge';
-	import ProductCard from '$lib/components/product-card.svelte';
+	import ProductCard from '#lib/components/product-card.svelte';
 	import {
 		brands,
 		categoryIcons,
@@ -19,7 +19,7 @@
 		phoneBrands,
 		phoneProducts,
 		quickDeals
-	} from '$lib/data/home-mock';
+	} from '#lib/data/home-mock';
 
 	const slideText = [
 		{ title: m.home_slide1Title, sub: m.home_slide1Sub },

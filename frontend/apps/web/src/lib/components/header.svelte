@@ -3,10 +3,10 @@
 	import { goto, invalidateAll } from '$app/navigation';
 	import { page } from '$app/state';
 	import type { SessionUser } from '@ecommerce/lib/types';
-	import { m } from '$lib/paraglide/messages.js';
-	import { getLocale, locales, localizeHref } from '$lib/paraglide/runtime.js';
-	import { cart } from '$lib/stores/cart.svelte';
-	import { logout } from '$lib/remote/auth.remote';
+	import { m } from '#lib/paraglide/messages.js';
+	import { getLocale, locales, localizeHref } from '#lib/paraglide/runtime.js';
+	import { cart } from '#lib/stores/cart.svelte';
+	import { logout } from '#lib/remote/auth.remote';
 	import { Badge } from '@ecommerce/ui/badge';
 	import { Button } from '@ecommerce/ui/button';
 	import * as DropdownMenu from '@ecommerce/ui/dropdown-menu';

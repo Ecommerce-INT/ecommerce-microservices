@@ -1,9 +1,7 @@
+import { computeTotals } from '@ecommerce/lib/cart';
 import type { CartItem, Product } from '@ecommerce/lib/types';
 
 const STORAGE_KEY = 'ecommerce-cart';
-
-export const FREE_SHIPPING_THRESHOLD = 500_000;
-export const SHIPPING_FEE = 30_000;
 
 function readStoredItems(): CartItem[] {
 	if (typeof localStorage === 'undefined') return [];
@@ -29,13 +27,14 @@ class CartStore {
 	hydrated = $state(false);
 
 	totalItems = $derived(this.items.reduce((sum, item) => sum + item.quantity, 0));
-	totalPrice = $derived(
-		this.items.reduce((sum, item) => sum + item.product.priceUnit * item.quantity, 0)
+	totals = $derived(
+		computeTotals(
+			this.items.map((item) => ({ priceUnit: item.product.priceUnit, quantity: item.quantity }))
+		)
 	);
-	shippingFee = $derived(
-		this.totalPrice >= FREE_SHIPPING_THRESHOLD || this.items.length === 0 ? 0 : SHIPPING_FEE
-	);
-	grandTotal = $derived(this.totalPrice + this.shippingFee);
+	totalPrice = $derived(this.totals.subtotal);
+	shippingFee = $derived(this.totals.shippingFee);
+	grandTotal = $derived(this.totals.total);
 
 	/** Reads localStorage on the client. Called once from the root layout on mount. */
 	hydrate() {

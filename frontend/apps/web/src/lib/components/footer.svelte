@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { Mail, MapPin, Phone } from '@lucide/svelte';
-	import { m } from '$lib/paraglide/messages.js';
-	import { localizeHref } from '$lib/paraglide/runtime.js';
+	import { m } from '#lib/paraglide/messages.js';
+	import { localizeHref } from '#lib/paraglide/runtime.js';
 
 	const columns = [
 		{

@@ -10,9 +10,6 @@ export default defineConfig({
 	plugins: [
 		tailwindcss(),
 		sveltekit({
-			// Kit 3 replaced the built-in `$lib` alias with the `#lib` imports map.
-			// We keep `$lib` because shadcn-svelte generates `$lib/...` imports.
-			alias: { $lib: 'src/lib' },
 			experimental: {
 				remoteFunctions: true
 			},

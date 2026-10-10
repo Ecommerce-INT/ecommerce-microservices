@@ -4,12 +4,12 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import type { Product } from '@ecommerce/lib/types';
-	import { m } from '$lib/paraglide/messages.js';
-	import { localizeHref } from '$lib/paraglide/runtime.js';
+	import { m } from '#lib/paraglide/messages.js';
+	import { localizeHref } from '#lib/paraglide/runtime.js';
 	import { Button } from '@ecommerce/ui/button';
 	import { Input } from '@ecommerce/ui/input';
 	import { Skeleton } from '@ecommerce/ui/skeleton';
-	import ProductCard from '$lib/components/product-card.svelte';
+	import ProductCard from '#lib/components/product-card.svelte';
 	import { getCategories, getProducts } from './catalog.remote';
 
 	const SORTS = [

@@ -7,3 +7,8 @@
 
 # Makefiles must stay LF too: CRLF breaks `\` line continuations in POSIX shells.
 Makefile text eol=lf
+
+# Frontend sources must stay LF: Prettier's default `endOfLine` is `lf`, so a
+# CRLF checkout would make `prettier --check` (and the frontend `lint` job) fail
+# on every file. `text=auto` keeps git's binary detection for assets.
+frontend/** text=auto eol=lf

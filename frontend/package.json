@@ -17,6 +17,7 @@
 		"check": "bun run --filter '*' check",
 		"lint": "bun run --filter '*' lint",
 		"format": "bun run --filter '*' format",
+		"i18n:check": "bun scripts/locale-parity.ts",
 		"test": "bun test"
 	},
 	"devDependencies": {

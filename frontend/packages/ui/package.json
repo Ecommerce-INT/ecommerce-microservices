@@ -13,6 +13,7 @@
 		"./card": "./src/components/card/index.ts",
 		"./dialog": "./src/components/dialog/index.ts",
 		"./dropdown-menu": "./src/components/dropdown-menu/index.ts",
+		"./empty-state": "./src/components/empty-state/index.ts",
 		"./input": "./src/components/input/index.ts",
 		"./label": "./src/components/label/index.ts",
 		"./pagination": "./src/components/pagination/index.ts",
@@ -22,6 +23,7 @@
 		"./skeleton": "./src/components/skeleton/index.ts",
 		"./sonner": "./src/components/sonner/index.ts",
 		"./table": "./src/components/table/index.ts",
+		"./table-skeleton": "./src/components/table-skeleton/index.ts",
 		"./textarea": "./src/components/textarea/index.ts"
 	},
 	"scripts": {

@@ -1,6 +1,6 @@
 import { query } from '$app/server';
 import { productQuerySchema } from '@ecommerce/lib/schemas';
-import { api } from '$lib/server/api';
+import { api } from '#lib/server/api';
 
 /**
  * Catalog listing. `productQuerySchema` coerces/validates every argument that

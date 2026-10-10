@@ -1,9 +1,10 @@
 <script lang="ts">
 	import { Minus, Plus, ShoppingCart, Trash2 } from '@lucide/svelte';
-	import { m } from '$lib/paraglide/messages.js';
-	import { localizeHref } from '$lib/paraglide/runtime.js';
+	import { m } from '#lib/paraglide/messages.js';
+	import { localizeHref } from '#lib/paraglide/runtime.js';
+	import { FREE_SHIPPING_THRESHOLD } from '@ecommerce/lib/cart';
 	import { formatPrice } from '@ecommerce/lib/format';
-	import { cart, FREE_SHIPPING_THRESHOLD } from '$lib/stores/cart.svelte';
+	import { cart } from '#lib/stores/cart.svelte';
 	import { Button } from '@ecommerce/ui/button';
 	import { Separator } from '@ecommerce/ui/separator';
 	import { Skeleton } from '@ecommerce/ui/skeleton';
@@ -85,7 +86,7 @@
 								<Button
 									variant="ghost"
 									size="icon-xs"
-									aria-label="decrease"
+									aria-label={m.common_decrease()}
 									onclick={() => cart.updateQuantity(item.product.productId, item.quantity - 1)}
 								>
 									<Minus class="size-3" />
@@ -94,7 +95,7 @@
 								<Button
 									variant="ghost"
 									size="icon-xs"
-									aria-label="increase"
+									aria-label={m.common_increase()}
 									onclick={() => cart.updateQuantity(item.product.productId, item.quantity + 1)}
 								>
 									<Plus class="size-3" />

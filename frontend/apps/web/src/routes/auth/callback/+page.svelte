@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { CircleAlert, Loader2 } from '@lucide/svelte';
-	import { m } from '$lib/paraglide/messages.js';
-	import { localizeHref } from '$lib/paraglide/runtime.js';
+	import { m } from '#lib/paraglide/messages.js';
+	import { localizeHref } from '#lib/paraglide/runtime.js';
 	import { Button } from '@ecommerce/ui/button';
 	import type { PageProps } from './$types';
 

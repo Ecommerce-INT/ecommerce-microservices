@@ -1,7 +1,7 @@
 import { command, form, query, requested } from '$app/server';
 import * as v from 'zod';
 import { productQuerySchema, productUpsertSchema } from '@ecommerce/lib/schemas';
-import { api } from '$lib/server/api';
+import { api } from '#lib/server/api';
 
 export const getProducts = query(productQuerySchema, ({ page, size, search }) =>
 	api().products.list({ page, size, search })

@@ -1,6 +1,6 @@
 import { redirect } from '@sveltejs/kit';
 import { apiPublicUrl } from '@ecommerce/lib/server';
-import { localizeHref } from '$lib/paraglide/runtime.js';
+import { localizeHref } from '#lib/paraglide/runtime.js';
 import { safeRedirect } from '@ecommerce/lib/server';
 import type { PageServerLoad } from './$types';
 

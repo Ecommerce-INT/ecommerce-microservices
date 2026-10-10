@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Pencil, Plus, Search, Trash2 } from '@lucide/svelte';
+	import { PackageOpen, Pencil, Plus, Search, Trash2 } from '@lucide/svelte';
 	import { toast } from 'svelte-sonner';
 	import { page } from '$app/state';
 	import { formatPrice } from '@ecommerce/lib/format';
@@ -9,10 +9,11 @@
 	import { Badge } from '@ecommerce/ui/badge';
 	import { Button } from '@ecommerce/ui/button';
 	import * as Dialog from '@ecommerce/ui/dialog';
+	import { EmptyState } from '@ecommerce/ui/empty-state';
 	import { Input } from '@ecommerce/ui/input';
 	import { Label } from '@ecommerce/ui/label';
-	import { Skeleton } from '@ecommerce/ui/skeleton';
 	import * as Table from '@ecommerce/ui/table';
+	import { TableSkeleton } from '@ecommerce/ui/table-skeleton';
 	import { deleteProduct, getCategoryOptions, getProducts, saveProduct } from './products.remote';
 
 	const currentPage = $derived(Math.max(0, Number(page.url.searchParams.get('page') ?? 0) || 0));
@@ -78,7 +79,7 @@
 </div>
 
 {#await getProducts(args)}
-	<Skeleton class="h-72 rounded-xl" />
+	<TableSkeleton rows={6} />
 {:then result}
 	<p class="mb-2 text-sm text-muted-foreground">
 		{m.products_count({ count: String(result.totalElements) })}
@@ -152,7 +153,11 @@
 		</Table.Root>
 
 		{#if result.content.length === 0}
-			<p class="p-10 text-center text-sm text-muted-foreground">{m.products_noProducts()}</p>
+			<EmptyState
+				class="rounded-none border-0"
+				icon={PackageOpen}
+				title={m.products_noProducts()}
+			/>
 		{/if}
 	</div>
 

@@ -3,11 +3,11 @@
 	import { toast } from 'svelte-sonner';
 	import { formatPrice } from '@ecommerce/lib/format';
 	import type { Product } from '@ecommerce/lib/types';
-	import { m } from '$lib/paraglide/messages.js';
-	import { cart } from '$lib/stores/cart.svelte';
+	import { m } from '#lib/paraglide/messages.js';
+	import { cart } from '#lib/stores/cart.svelte';
 	import { Badge } from '@ecommerce/ui/badge';
 	import { Button } from '@ecommerce/ui/button';
-	import type { ShowcaseProduct } from '$lib/data/home-mock';
+	import type { ShowcaseProduct } from '#lib/data/home-mock';
 
 	type CardProduct = Product | ShowcaseProduct;
 

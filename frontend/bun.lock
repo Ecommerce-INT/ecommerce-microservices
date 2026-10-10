@@ -22,6 +22,7 @@
       "devDependencies": {
         "@ecommerce/lib": "workspace:*",
         "@ecommerce/ui": "workspace:*",
+        "@fontsource-variable/geist": "^5.3.0",
         "@inlang/paraglide-js": "^2.18.2",
         "@lucide/svelte": "^1.55.0",
         "@sveltejs/adapter-bun": "^1.0.0",
@@ -45,6 +46,7 @@
       "devDependencies": {
         "@ecommerce/lib": "workspace:*",
         "@ecommerce/ui": "workspace:*",
+        "@fontsource-variable/geist": "^5.3.0",
         "@inlang/paraglide-js": "^2.18.2",
         "@lucide/svelte": "^1.55.0",
         "@sveltejs/adapter-bun": "^1.0.0",
@@ -157,6 +159,8 @@
     "@floating-ui/dom": ["@floating-ui/dom@1.8.0", "", { "dependencies": { "@floating-ui/core": "^1.8.0", "@floating-ui/utils": "^0.2.12" } }, "sha512-yXSrzeHZBTZadLOlfyhCkJHNeLJnHRnRInwdZ40L7ZiaAtrBwoYlsDrX3v5zB1Utk7CLfzcOVnVVWoXEky7Ceg=="],
 
     "@floating-ui/utils": ["@floating-ui/utils@0.2.12", "", {}, "sha512-HpCo8tmWzLVad5s2d19EhAz5zqrrQ6s69qd6moPMQvkOuSwDT1YgRfWSVuc4ennqrgv3OHppiOGMQ7oC13yIww=="],
+
+    "@fontsource-variable/geist": ["@fontsource-variable/geist@5.3.0", "", {}, "sha512-j0m+vLQuG5XAYoHtGCVu0spvlGreR3EzpECUVzkFmI1mTVnAO38l/NEPDCFgZ177JxzYJCLSmTQibIiYPilGrA=="],
 
     "@humanfs/core": ["@humanfs/core@0.19.2", "", { "dependencies": { "@humanfs/types": "^0.15.0" } }, "sha512-UhXNm+CFMWcbChXywFwkmhqjs3PRCmcSa/hfBgLIb7oQ5HNb1wS0icWsGtSAUNgefHeI+eBrA8I1fxmbHsGdvA=="],
 

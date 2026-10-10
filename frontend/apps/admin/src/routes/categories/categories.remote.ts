@@ -1,7 +1,7 @@
 import { command, form, query, requested } from '$app/server';
 import * as v from 'zod';
 import { categoryUpsertSchema, pageQuerySchema } from '@ecommerce/lib/schemas';
-import { api } from '$lib/server/api';
+import { api } from '#lib/server/api';
 
 export const getCategories = query(pageQuerySchema, ({ page, size }) =>
 	api().categories.list({ page, size })

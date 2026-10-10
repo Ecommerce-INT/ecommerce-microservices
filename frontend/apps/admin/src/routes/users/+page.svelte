@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { m } from '#lib/paraglide/messages.js';
-	import ComingSoon from '$lib/components/coming-soon.svelte';
+	import ComingSoon from '#lib/components/coming-soon.svelte';
 </script>
 
 <svelte:head>

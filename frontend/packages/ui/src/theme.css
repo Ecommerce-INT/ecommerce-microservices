@@ -77,6 +77,8 @@
 }
 
 @theme inline {
+	--font-sans: 'Geist Variable', ui-sans-serif, system-ui, sans-serif;
+
 	--radius-sm: calc(var(--radius) * 0.6);
 	--radius-md: calc(var(--radius) * 0.8);
 	--radius-lg: var(--radius);
@@ -145,7 +147,7 @@
 		@apply border-border outline-ring/50;
 	}
 	body {
-		@apply bg-background text-foreground;
+		@apply bg-background text-foreground font-sans;
 	}
 }
 

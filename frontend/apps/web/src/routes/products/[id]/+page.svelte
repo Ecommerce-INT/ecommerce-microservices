@@ -11,9 +11,9 @@
 	import { toast } from 'svelte-sonner';
 	import { page } from '$app/state';
 	import { formatPrice } from '@ecommerce/lib/format';
-	import { m } from '$lib/paraglide/messages.js';
-	import { localizeHref } from '$lib/paraglide/runtime.js';
-	import { cart } from '$lib/stores/cart.svelte';
+	import { m } from '#lib/paraglide/messages.js';
+	import { localizeHref } from '#lib/paraglide/runtime.js';
+	import { cart } from '#lib/stores/cart.svelte';
 	import { Badge } from '@ecommerce/ui/badge';
 	import { Button } from '@ecommerce/ui/button';
 	import { Skeleton } from '@ecommerce/ui/skeleton';
@@ -91,7 +91,7 @@
 					<Button
 						variant="ghost"
 						size="icon-sm"
-						aria-label="decrease"
+						aria-label={m.common_decrease()}
 						onclick={() => (quantity = Math.max(1, quantity - 1))}
 					>
 						<Minus class="size-3.5" />
@@ -100,7 +100,7 @@
 					<Button
 						variant="ghost"
 						size="icon-sm"
-						aria-label="increase"
+						aria-label={m.common_increase()}
 						onclick={() => (quantity = Math.min(product.quantity || 99, quantity + 1))}
 					>
 						<Plus class="size-3.5" />

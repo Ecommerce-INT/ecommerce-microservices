@@ -4,7 +4,7 @@
 	import { m } from '#lib/paraglide/messages.js';
 	import { localizeHref } from '#lib/paraglide/runtime.js';
 	import { Button } from '@ecommerce/ui/button';
-	import { logout } from '$lib/remote/auth.remote';
+	import { logout } from '#lib/remote/auth.remote';
 
 	let loggingOut = $state(false);
 

@@ -2,10 +2,11 @@
 	import { Package } from '@lucide/svelte';
 	import { page } from '$app/state';
 	import { formatDate, formatPrice } from '@ecommerce/lib/format';
-	import { m } from '$lib/paraglide/messages.js';
-	import { localizeHref } from '$lib/paraglide/runtime.js';
+	import { m } from '#lib/paraglide/messages.js';
+	import { localizeHref } from '#lib/paraglide/runtime.js';
 	import { Badge } from '@ecommerce/ui/badge';
 	import { Button } from '@ecommerce/ui/button';
+	import { EmptyState } from '@ecommerce/ui/empty-state';
 	import { Skeleton } from '@ecommerce/ui/skeleton';
 	import { getOrders } from './orders.remote';
 
@@ -30,16 +31,11 @@
 	</div>
 {:then result}
 	{#if result.content.length === 0}
-		<div
-			class="grid justify-items-center gap-4 rounded-xl border border-border bg-card p-12 text-center"
-		>
-			<Package class="size-12 text-muted-foreground" />
-			<div>
-				<p class="text-lg font-semibold">{m.orders_emptyTitle()}</p>
-				<p class="mt-1 text-sm text-muted-foreground">{m.orders_emptyHint()}</p>
-			</div>
-			<Button href={localizeHref('/products')}>{m.orders_shopNow()}</Button>
-		</div>
+		<EmptyState icon={Package} title={m.orders_emptyTitle()} description={m.orders_emptyHint()}>
+			{#snippet action()}
+				<Button href={localizeHref('/products')}>{m.orders_shopNow()}</Button>
+			{/snippet}
+		</EmptyState>
 	{:else}
 		<div class="grid gap-3">
 			{#each result.content as order (order.orderId)}
