@@ -274,6 +274,33 @@ jobs:
     secrets:
       GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  frontend-check:
+    name: Frontend — check, lint, test
+    needs: [detect-changes]
+    if: needs.detect-changes.outputs.frontend == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.3
+      - name: Install workspace dependencies
+        working-directory: frontend
+        run: bun install --frozen-lockfile
+      - name: Type check (svelte-check + tsc)
+        working-directory: frontend
+        run: bun run check
+      - name: Lint & format check
+        working-directory: frontend
+        run: bun run lint
+      - name: Locale catalogue parity
+        working-directory: frontend
+        run: bun run i18n:check
+      - name: Unit tests
+        working-directory: frontend
+        run: bun test
+
   build-frontend-web:
     needs: [detect-changes]
     if: needs.detect-changes.outputs.frontend == 'true' || github.event_name == 'workflow_dispatch'
@@ -355,6 +382,7 @@ jobs:
       - build-search-service
       - build-promotion-service
       - build-tax-service
+      - frontend-check
       - build-frontend-web
       - build-frontend-admin
     runs-on: ubuntu-latest

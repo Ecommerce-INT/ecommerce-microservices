@@ -1,8 +1,21 @@
 {
-  "extends": "@ecommerce/config/tsconfig/base.json",
-  "compilerOptions": {
-    "jsx": "preserve"
-  },
-  "include": ["src"],
-  "exclude": ["node_modules"]
+	"compilerOptions": {
+		"strict": true,
+		"module": "esnext",
+		"target": "esnext",
+		"moduleResolution": "bundler",
+		"verbatimModuleSyntax": true,
+		"isolatedModules": true,
+		"allowJs": true,
+		"checkJs": true,
+		"resolveJsonModule": true,
+		"skipLibCheck": true,
+		"noEmit": true,
+		"types": ["svelte"],
+		"paths": {
+			"@ecommerce/ui": ["./src/index.ts"],
+			"@ecommerce/ui/*": ["./src/components/*", "./src/*"]
+		}
+	},
+	"include": ["src/**/*.ts", "src/**/*.svelte"]
 }

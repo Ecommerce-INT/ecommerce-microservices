@@ -1,42 +1,49 @@
-import { sql } from "./db";
-import type { RatingListVm, RatingPostVm, RatingVm, ResponeStatusVm } from "./types";
+import { and, count, desc, eq, gte, lte, sql } from 'drizzle-orm';
+import { db } from './db';
+import { rating } from './schema';
+import type { RatingListVm, RatingPostVm, RatingVm, ResponeStatusVm } from './types';
 
-function mapRow(r: any): RatingVm {
+function mapRow(r: typeof rating.$inferSelect): RatingVm {
   return {
-    id: Number(r.id),
-    content: r.content || "",
-    star: Number(r.rating_star),
-    productId: Number(r.product_id),
-    productName: r.product_name || "",
-    createdBy: r.created_by || "",
-    lastName: r.last_name || "",
-    firstName: r.first_name || "",
-    createdOn: r.created_on instanceof Date ? r.created_on.toISOString() : String(r.created_on || ""),
+    id: r.id,
+    content: r.content || '',
+    star: r.ratingStar,
+    productId: r.productId ?? 0,
+    productName: r.productName || '',
+    createdBy: r.createdBy || '',
+    lastName: r.lastName || '',
+    firstName: r.firstName || '',
+    createdOn: r.createdOn instanceof Date ? r.createdOn.toISOString() : String(r.createdOn || '')
   };
 }
 
 export class RatingService {
-  async getRatingListByProductId(productId: number, pageNo: number, pageSize: number): Promise<RatingListVm> {
+  async getRatingListByProductId(
+    productId: number,
+    pageNo: number,
+    pageSize: number
+  ): Promise<RatingListVm> {
     const offset = pageNo * pageSize;
 
-    const countRes = await sql`
-      SELECT COUNT(*) as count FROM rating WHERE product_id = ${productId}
-    `;
-    const totalElements = Number(countRes[0]?.count || 0);
+    const [countRow] = await db
+      .select({ total: count() })
+      .from(rating)
+      .where(eq(rating.productId, productId));
+    const totalElements = Number(countRow?.total ?? 0);
     const totalPages = pageSize > 0 ? Math.ceil(totalElements / pageSize) : 0;
 
-    const rows = await sql`
-      SELECT id, content, rating_star, product_id, product_name, first_name, last_name, created_by, created_on
-      FROM rating
-      WHERE product_id = ${productId}
-      ORDER BY created_on DESC
-      LIMIT ${pageSize} OFFSET ${offset}
-    `;
+    const rows = await db
+      .select()
+      .from(rating)
+      .where(eq(rating.productId, productId))
+      .orderBy(desc(rating.createdOn))
+      .limit(pageSize)
+      .offset(offset);
 
     return {
       ratingList: rows.map(mapRow),
       totalElements,
-      totalPages,
+      totalPages
     };
   }
 
@@ -50,38 +57,37 @@ export class RatingService {
     pageSize: number
   ): Promise<RatingListVm> {
     const offset = pageNo * pageSize;
-    const proPattern = `%${(proName || "").toLowerCase()}%`;
-    const cusPattern = `%${(cusName || "").toLowerCase()}%`;
-    const msgPattern = `%${(message || "").toLowerCase()}%`;
+    const proPattern = `%${(proName || '').toLowerCase()}%`;
+    const cusPattern = `%${(cusName || '').toLowerCase()}%`;
+    const msgPattern = `%${(message || '').toLowerCase()}%`;
 
     const fromDate = createdFrom ? new Date(createdFrom) : new Date(0);
     const toDate = createdTo ? new Date(createdTo) : new Date();
 
-    const countRes = await sql`
-      SELECT COUNT(*) as count FROM rating
-      WHERE LOWER(COALESCE(product_name, '')) LIKE ${proPattern}
-        AND LOWER(CONCAT(COALESCE(first_name, ''), ' ', COALESCE(last_name, ''))) LIKE ${cusPattern}
-        AND LOWER(COALESCE(content, '')) LIKE ${msgPattern}
-        AND created_on BETWEEN ${fromDate} AND ${toDate}
-    `;
-    const totalElements = Number(countRes[0]?.count || 0);
+    const filter = and(
+      sql`LOWER(COALESCE(${rating.productName}, '')) LIKE ${proPattern}`,
+      sql`LOWER(CONCAT(COALESCE(${rating.firstName}, ''), ' ', COALESCE(${rating.lastName}, ''))) LIKE ${cusPattern}`,
+      sql`LOWER(COALESCE(${rating.content}, '')) LIKE ${msgPattern}`,
+      gte(rating.createdOn, fromDate),
+      lte(rating.createdOn, toDate)
+    );
+
+    const [countRow] = await db.select({ total: count() }).from(rating).where(filter);
+    const totalElements = Number(countRow?.total ?? 0);
     const totalPages = pageSize > 0 ? Math.ceil(totalElements / pageSize) : 0;
 
-    const rows = await sql`
-      SELECT id, content, rating_star, product_id, product_name, first_name, last_name, created_by, created_on
-      FROM rating
-      WHERE LOWER(COALESCE(product_name, '')) LIKE ${proPattern}
-        AND LOWER(CONCAT(COALESCE(first_name, ''), ' ', COALESCE(last_name, ''))) LIKE ${cusPattern}
-        AND LOWER(COALESCE(content, '')) LIKE ${msgPattern}
-        AND created_on BETWEEN ${fromDate} AND ${toDate}
-      ORDER BY created_on DESC
-      LIMIT ${pageSize} OFFSET ${offset}
-    `;
+    const rows = await db
+      .select()
+      .from(rating)
+      .where(filter)
+      .orderBy(desc(rating.createdOn))
+      .limit(pageSize)
+      .offset(offset);
 
     return {
       ratingList: rows.map(mapRow),
       totalElements,
-      totalPages,
+      totalPages
     };
   }
 
@@ -89,44 +95,46 @@ export class RatingService {
     req: RatingPostVm,
     userClaims: { userId?: string; firstName?: string; lastName?: string }
   ): Promise<RatingVm> {
-    const userId = userClaims.userId || "anonymous";
-    const firstName = userClaims.firstName || "Customer";
-    const lastName = userClaims.lastName || "";
+    const userId = userClaims.userId || 'anonymous';
+    const firstName = userClaims.firstName || 'Customer';
+    const lastName = userClaims.lastName || '';
 
-    const rows = await sql`
-      INSERT INTO rating (
-        content, rating_star, product_id, product_name,
-        first_name, last_name, created_by, created_on
-      ) VALUES (
-        ${req.content}, ${req.star}, ${req.productId}, ${req.productName},
-        ${firstName}, ${lastName}, ${userId}, CURRENT_TIMESTAMP
-      )
-      RETURNING id, content, rating_star, product_id, product_name, first_name, last_name, created_by, created_on
-    `;
+    const [row] = await db
+      .insert(rating)
+      .values({
+        content: req.content,
+        ratingStar: req.star,
+        productId: req.productId,
+        productName: req.productName,
+        firstName,
+        lastName,
+        createdBy: userId
+      })
+      .returning();
 
-    return mapRow(rows[0]);
+    return mapRow(row);
   }
 
   async deleteRating(id: number): Promise<ResponeStatusVm> {
-    await sql`
-      DELETE FROM rating WHERE id = ${id}
-    `;
+    await db.delete(rating).where(eq(rating.id, id));
     return {
-      title: "Delete Rating",
-      message: "The request has been processed successfully",
-      statusCode: "200",
+      title: 'Delete Rating',
+      message: 'The request has been processed successfully',
+      statusCode: '200'
     };
   }
 
   async calculateAverageStar(productId: number): Promise<number> {
-    const res = await sql`
-      SELECT COALESCE(SUM(rating_star), 0) as total_stars, COUNT(*) as total_ratings
-      FROM rating
-      WHERE product_id = ${productId}
-    `;
+    const [row] = await db
+      .select({
+        totalStars: sql<number>`COALESCE(SUM(${rating.ratingStar}), 0)`,
+        totalRatings: count()
+      })
+      .from(rating)
+      .where(eq(rating.productId, productId));
 
-    const totalStars = Number(res[0]?.total_stars || 0);
-    const totalRatings = Number(res[0]?.total_ratings || 0);
+    const totalStars = Number(row?.totalStars ?? 0);
+    const totalRatings = Number(row?.totalRatings ?? 0);
 
     if (totalRatings === 0) {
       return 0.0;

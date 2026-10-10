@@ -396,17 +396,41 @@ services:
       - ecommerce-network
 
   # ============================================================
-  # FRONTEND — Next.js
+  # FRONTEND — SvelteKit 5 on Bun (SSR, httpOnly-cookie BFF auth)
   # ============================================================
   frontend:
-    image: ghcr.io/hoangtien2k3/frontend:latest
+    image: ghcr.io/hoangtien2k3/frontend-web:latest
     pull_policy: always
     container_name: frontend
     ports:
       - "3000:3000"
     environment:
       NODE_ENV: production
-      NEXT_PUBLIC_API_URL: http://localhost:9080
+      PORT: 3000
+      # Server-to-gateway calls stay inside the compose network...
+      API_INTERNAL_URL: http://apisix:9080
+      # ...while the browser only needs the gateway for the SSO login redirect.
+      API_PUBLIC_URL: http://localhost:9080
+      # Plain-HTTP local access: tell SvelteKit the real public origin.
+      ORIGIN: http://localhost:3000
+    depends_on:
+      apisix:
+        condition: service_started
+    networks:
+      - ecommerce-network
+
+  admin:
+    image: ghcr.io/hoangtien2k3/frontend-admin:latest
+    pull_policy: always
+    container_name: admin
+    ports:
+      - "3001:3001"
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      API_INTERNAL_URL: http://apisix:9080
+      API_PUBLIC_URL: http://localhost:9080
+      ORIGIN: http://localhost:3001
     depends_on:
       apisix:
         condition: service_started

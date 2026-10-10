@@ -35,12 +35,18 @@ spec:
             privileged: false
           ports:
             - containerPort: 3000
-          # The browser calls APISIX directly at NEXT_PUBLIC_API_URL, which is baked
-          # into the image at build time (see Dockerfile / CI build-args) — there is
-          # no runtime API URL to inject here.
+          # The browser never calls the gateway directly — every API call goes
+          # through the SvelteKit server (remote functions), so only the
+          # in-cluster gateway URL and the ingress protocol are needed here.
           env:
             - name: NODE_ENV
               value: production
+            - name: API_INTERNAL_URL
+              value: http://apisix-gateway:9080
+            - name: API_PUBLIC_URL
+              value: https://api.ecommerce.local
+            - name: PROTOCOL_HEADER
+              value: x-forwarded-proto
           startupProbe:
             httpGet:
               path: /

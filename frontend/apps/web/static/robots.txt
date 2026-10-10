@@ -1,0 +1,11 @@
+# The storefront is public. Keep private customer flows out of the index.
+User-agent: *
+Allow: /
+Disallow: /cart
+Disallow: /checkout
+Disallow: /orders
+Disallow: /auth/
+Disallow: /en/cart
+Disallow: /en/checkout
+Disallow: /en/orders
+Disallow: /en/auth/

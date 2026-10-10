@@ -6,7 +6,7 @@ describe("Rating Service API", () => {
     const req = new Request("http://localhost:8089/actuator/health");
     const res = await appObj.fetch(req);
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = (await res.json()) as { status: string };
     expect(body.status).toBe("UP");
   });
 
@@ -14,7 +14,7 @@ describe("Rating Service API", () => {
     const req = new Request("http://localhost:8089/rating/actuator/health");
     const res = await appObj.fetch(req);
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = (await res.json()) as { status: string };
     expect(body.status).toBe("UP");
   });
 

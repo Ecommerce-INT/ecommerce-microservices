@@ -1,0 +1,9 @@
+@import '@fontsource-variable/geist';
+@import 'tailwindcss';
+@import '@ecommerce/ui/theme.css';
+@source '../../../../packages/ui/src';
+
+/* Storefront-specific override of the shared theme. */
+:root {
+	--background: #f4f4f4;
+}

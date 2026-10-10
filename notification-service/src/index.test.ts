@@ -6,7 +6,7 @@ describe("Notification Service API", () => {
     const req = new Request("http://localhost:8090/actuator/health");
     const res = await appObj.fetch(req);
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = (await res.json()) as { status: string };
     expect(body.status).toBe("UP");
   });
 
@@ -14,7 +14,7 @@ describe("Notification Service API", () => {
     const req = new Request("http://localhost:8090/notification/actuator/health");
     const res = await appObj.fetch(req);
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = (await res.json()) as { status: string };
     expect(body.status).toBe("UP");
   });
 
@@ -48,7 +48,7 @@ describe("Notification Service API", () => {
     const req = new Request("http://localhost:8090/api/notifications");
     const res = await appObj.fetch(req);
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = (await res.json()) as { status: string };
     expect(Array.isArray(body)).toBe(true);
   });
 });

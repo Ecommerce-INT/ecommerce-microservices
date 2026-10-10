@@ -1,0 +1,3 @@
+# Backoffice — never index.
+User-agent: *
+Disallow: /

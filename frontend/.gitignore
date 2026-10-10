@@ -1,39 +1,24 @@
-# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
-
 # dependencies
 node_modules/
-.pnp
-.pnp.*
-.yarn/*
-!.yarn/patches
-!.yarn/plugins
-!.yarn/releases
-!.yarn/versions
 
-# turborepo
-.turbo
-
-# testing
-coverage
-
-# next.js
-.next/
-out/
+# sveltekit
+.svelte-kit/
 build/
-next-env.d.ts
+.vercel/
+
+# tests / coverage
+coverage/
+
+# env
+.env
+.env.*
+!.env.example
 
 # misc
 .DS_Store
 *.pem
-
-# debug
 npm-debug.log*
 yarn-debug.log*
-yarn-error.log*
 .pnpm-debug.log*
-
-# vercel
-.vercel
-
-# typescript
+bun-debug.log*
 *.tsbuildinfo
