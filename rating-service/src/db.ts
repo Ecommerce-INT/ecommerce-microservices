@@ -1,4 +1,5 @@
-import postgres from "postgres";
+import { SQL } from "bun";
+import { drizzle } from "drizzle-orm/bun-sql";
 
 function getDatabaseUrl(): string {
   if (process.env.DATABASE_URL) {
@@ -32,16 +33,19 @@ function getDatabaseUrl(): string {
 
 const connectionString = getDatabaseUrl();
 
-export const sql = postgres(connectionString, {
+export const client = new SQL(connectionString, {
   max: 20,
-  idle_timeout: 30,
-  connect_timeout: 5,
-  onnotice: () => {},
+  idleTimeout: 30,
+  connectionTimeout: 5,
+  // PgBouncer in transaction mode cannot serve named prepared statements.
+  prepare: false,
 });
+
+export const db = drizzle({ client });
 
 export async function initDb() {
   try {
-    await sql`
+    await client`
       CREATE TABLE IF NOT EXISTS rating (
         id BIGSERIAL PRIMARY KEY,
         content VARCHAR(255),

@@ -37,7 +37,7 @@ export interface TaxRateVm {
   stateOrProvinceId?: number | null;
   zipCode?: string | null;
   taxClassId: number;
-  taxClassName?: string;
+  taxClassName?: string | null;
 }
 
 export interface TaxRateListVm {

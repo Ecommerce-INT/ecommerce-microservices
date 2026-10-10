@@ -1,11 +1,12 @@
 import nodemailer from "nodemailer";
+import type { Transporter } from "nodemailer";
 
 const host = process.env.MAIL_HOST || "smtp.gmail.com";
 const port = parseInt(process.env.MAIL_PORT || "587", 10);
 const user = process.env.MAIL_USERNAME || "";
 const pass = process.env.MAIL_PASSWORD || "";
 
-let transporter: nodemailer.Transporter | null = null;
+let transporter: Transporter | null = null;
 
 if (user && pass) {
   transporter = nodemailer.createTransport({
