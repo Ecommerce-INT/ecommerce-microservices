@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"com.ecommerce/search-service/internal/model"
-	"github.com/opensearch-project/opensearch-go/v4/opensearchapi"
+	"github.com/opensearch-project/opensearch-go/v5/opensearchapi"
 )
 
 type SearchService struct {
@@ -109,10 +109,10 @@ func (s *SearchService) FindProductAdvance(
 	}
 
 	searchReq := opensearchapi.SearchReq{
-		Indices: []string{"product"},
-		Body:    &buf,
-		Params: opensearchapi.SearchParams{
-			TrackTotalHits: json.RawMessage(`true`),
+		Indices:    []string{"product"},
+		BodyReader: &buf,
+		Params: &opensearchapi.SearchParams{
+			TrackTotalHits: "true",
 		},
 	}
 
@@ -130,7 +130,14 @@ func (s *SearchService) FindProductAdvance(
 		}, nil
 	}
 
-	totalHits := int64(searchResp.Hits.Total.Value)
+	totalHits := int64(0)
+	if searchResp.Hits.Total != nil {
+		if th, err := searchResp.Hits.Total.TotalHits(); err == nil {
+			totalHits = th.Value
+		} else if v, err := searchResp.Hits.Total.Int64(); err == nil {
+			totalHits = v
+		}
+	}
 
 	products := []model.ProductGetVm{}
 	for _, hit := range searchResp.Hits.Hits {
@@ -205,8 +212,8 @@ func (s *SearchService) AutoComplete(ctx context.Context, keyword string) (*mode
 	}
 
 	searchReq := opensearchapi.SearchReq{
-		Indices: []string{"product"},
-		Body:    &buf,
+		Indices:    []string{"product"},
+		BodyReader: &buf,
 	}
 
 	searchResp, err := s.os.Search(ctx, &searchReq)
@@ -242,12 +249,12 @@ func (s *SearchService) IndexProduct(ctx context.Context, p model.ProductDoc) er
 
 	docID := fmt.Sprintf("%d", p.ID)
 	indexReq := opensearchapi.IndexReq{
-		Index:      "product",
-		DocumentID: docID,
-		Body:       bytes.NewReader(data),
+		Index: "product",
+		ID:    docID,
+		Body:  bytes.NewReader(data),
 	}
 
-	_, err = s.os.Index(ctx, indexReq)
+	_, err = s.os.Document.Index(ctx, indexReq)
 	return err
 }
 
@@ -257,9 +264,9 @@ func (s *SearchService) DeleteProduct(ctx context.Context, id int64) error {
 	}
 
 	docID := fmt.Sprintf("%d", id)
-	deleteReq := opensearchapi.DocumentDeleteReq{
-		Index:      "product",
-		DocumentID: docID,
+	deleteReq := opensearchapi.DeleteReq{
+		Index: "product",
+		ID:    docID,
 	}
 
 	_, err := s.os.Document.Delete(ctx, deleteReq)

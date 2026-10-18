@@ -16,11 +16,11 @@ import (
 	"com.ecommerce/search-service/internal/service"
 	"com.ecommerce/shared/config"
 	commonmw "com.ecommerce/shared/middleware"
-	opensearch "github.com/opensearch-project/opensearch-go/v4"
-	"github.com/opensearch-project/opensearch-go/v4/opensearchapi"
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
+	opensearch "github.com/opensearch-project/opensearch-go/v5"
+	"github.com/opensearch-project/opensearch-go/v5/opensearchapi"
 )
 
 func main() {
@@ -33,11 +33,13 @@ func main() {
 
 	log.Printf("[Search Service] Starting service on port %s...", port)
 
+	discover := false
 	osClient, err := opensearchapi.NewClient(opensearchapi.Config{
 		Client: opensearch.Config{
-			Addresses: []string{osURL},
-			Username:  osUser,
-			Password:  osPass,
+			Addresses:            []string{osURL},
+			Username:             osUser,
+			Password:             osPass,
+			DiscoverNodesOnStart: &discover,
 		},
 	})
 	if err != nil {
@@ -94,4 +96,3 @@ func main() {
 	}
 	log.Println("[Search Service] Server exited successfully.")
 }
-
