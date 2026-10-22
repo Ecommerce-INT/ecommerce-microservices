@@ -36,6 +36,7 @@ func (r *OrderRepository) InitSchema(ctx context.Context) error {
 	schema := `
 	CREATE TABLE IF NOT EXISTS carts (
 		cart_id SERIAL PRIMARY KEY,
+		cart_uuid UUID DEFAULT uuidv7(),
 		user_id BIGINT,
 		created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
 		updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
@@ -43,6 +44,7 @@ func (r *OrderRepository) InitSchema(ctx context.Context) error {
 
 	CREATE TABLE IF NOT EXISTS orders (
 		order_id SERIAL PRIMARY KEY,
+		order_uuid UUID DEFAULT uuidv7(),
 		order_date TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
 		order_desc TEXT,
 		order_fee DOUBLE PRECISION,
@@ -51,6 +53,10 @@ func (r *OrderRepository) InitSchema(ctx context.Context) error {
 		created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
 		updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 	);
+
+	-- PostgreSQL 18 B-tree Skip Scan composite index optimizations
+	CREATE INDEX IF NOT EXISTS idx_orders_cart_product ON orders (cart_id, product_id);
+	CREATE INDEX IF NOT EXISTS idx_orders_cart_date ON orders (cart_id, order_date);
 	`
 	_, err := r.db.Exec(ctx, schema)
 	return err
@@ -222,11 +228,18 @@ func (r *OrderRepository) UpdateCart(ctx context.Context, id int, cart model.Car
 			psql.Quote("updated_at").EQ(psql.Raw("CURRENT_TIMESTAMP")),
 		),
 		um.Where(psql.Quote("cart_id").EQ(psql.Arg(id))),
+		um.Returning(psql.Quote("cart_id"), psql.Quote("user_id")),
 	)
-	if _, err := bob.Exec(ctx, r.db, query); err != nil {
+	row, err := bob.One(ctx, r.db, query, scan.StructMapper[cartRow]())
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
 		return nil, err
 	}
-	return r.FindCartById(ctx, id)
+	orders, _ := r.findOrdersByCartId(ctx, row.CartId)
+	c := row.toDto(orders)
+	return &c, nil
 }
 
 func (r *OrderRepository) DeleteCartById(ctx context.Context, id int) error {
@@ -482,6 +495,33 @@ func (r *OrderRepository) ExistsByOrderId(ctx context.Context, id int) (bool, er
 		))),
 	)
 	return bob.One(ctx, r.db, query, scan.SingleColumnMapper[bool])
+}
+
+// OrderFeeTransition tracks atomic order fee state transitions using PostgreSQL 18 RETURNING OLD, NEW.
+type OrderFeeTransition struct {
+	OrderId     int      `db:"order_id"`
+	PreviousFee *float64 `db:"previous_fee"`
+	NewFee      *float64 `db:"new_fee"`
+}
+
+// TransitionOrderFee updates the order fee atomically and returns both before and after states
+// in a single roundtrip via PostgreSQL 18's RETURNING OLD, NEW capability.
+func (r *OrderRepository) TransitionOrderFee(ctx context.Context, orderId int, newFee float64) (*OrderFeeTransition, error) {
+	if r.db.Pool == nil {
+		return &OrderFeeTransition{OrderId: orderId, PreviousFee: nil, NewFee: &newFee}, nil
+	}
+	query := `
+		UPDATE orders
+		SET order_fee = $1, updated_at = CURRENT_TIMESTAMP
+		WHERE order_id = $2
+		RETURNING order_id, OLD.order_fee AS previous_fee, NEW.order_fee AS new_fee;
+	`
+	var t OrderFeeTransition
+	err := r.db.Pool.QueryRow(ctx, query, newFee, orderId).Scan(&t.OrderId, &t.PreviousFee, &t.NewFee)
+	if err != nil {
+		return nil, err
+	}
+	return &t, nil
 }
 
 func nullableTime(s string) any {

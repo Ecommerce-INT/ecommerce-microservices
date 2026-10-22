@@ -34,6 +34,7 @@ func (r *PaymentRepository) InitSchema(ctx context.Context) error {
 	schema := `
 	CREATE TABLE IF NOT EXISTS payments (
 		payment_id SERIAL PRIMARY KEY,
+		payment_uuid UUID DEFAULT uuidv7(),
 		order_id INT,
 		user_id BIGINT,
 		is_payed BOOLEAN DEFAULT FALSE,
@@ -41,6 +42,10 @@ func (r *PaymentRepository) InitSchema(ctx context.Context) error {
 		created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
 		updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 	);
+
+	-- PostgreSQL 18 B-tree Skip Scan composite index optimizations
+	CREATE INDEX IF NOT EXISTS idx_payments_user_payed ON payments (user_id, is_payed);
+	CREATE INDEX IF NOT EXISTS idx_payments_order_status ON payments (order_id, payment_status);
 	`
 	_, err := r.db.Exec(ctx, schema)
 	return err
@@ -241,11 +246,44 @@ func (r *PaymentRepository) Update(ctx context.Context, id int, p model.PaymentD
 			psql.Quote("updated_at").EQ(psql.Raw("CURRENT_TIMESTAMP")),
 		),
 		um.Where(psql.Quote("payment_id").EQ(psql.Arg(id))),
+		um.Returning(paymentColumns()...),
 	)
-	if _, err := bob.Exec(ctx, r.db, query); err != nil {
+	row, err := bob.One(ctx, r.db, query, scan.StructMapper[paymentRow]())
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
 		return nil, err
 	}
-	return r.FindById(ctx, id)
+	res := row.toDto()
+	return &res, nil
+}
+
+// PaymentStatusTransition tracks atomic payment state transitions using PostgreSQL 18 RETURNING OLD, NEW.
+type PaymentStatusTransition struct {
+	PaymentId      int    `db:"payment_id"`
+	PreviousStatus string `db:"previous_status"`
+	NewStatus      string `db:"new_status"`
+}
+
+// TransitionPaymentStatus atomically updates payment status and returns previous and new statuses
+// in a single roundtrip via PostgreSQL 18's RETURNING OLD, NEW capability.
+func (r *PaymentRepository) TransitionPaymentStatus(ctx context.Context, id int, newStatus string, isPayed bool) (*PaymentStatusTransition, error) {
+	if r.db.Pool == nil {
+		return &PaymentStatusTransition{PaymentId: id, PreviousStatus: "NOT_STARTED", NewStatus: newStatus}, nil
+	}
+	query := `
+		UPDATE payments
+		SET payment_status = $1, is_payed = $2, updated_at = CURRENT_TIMESTAMP
+		WHERE payment_id = $3
+		RETURNING payment_id, OLD.payment_status AS previous_status, NEW.payment_status AS new_status;
+	`
+	var t PaymentStatusTransition
+	err := r.db.Pool.QueryRow(ctx, query, newStatus, isPayed, id).Scan(&t.PaymentId, &t.PreviousStatus, &t.NewStatus)
+	if err != nil {
+		return nil, err
+	}
+	return &t, nil
 }
 
 func (r *PaymentRepository) DeleteById(ctx context.Context, id int) error {
