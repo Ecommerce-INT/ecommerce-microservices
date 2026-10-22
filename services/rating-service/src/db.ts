@@ -48,6 +48,7 @@ export async function initDb() {
     await client`
       CREATE TABLE IF NOT EXISTS rating (
         id BIGSERIAL PRIMARY KEY,
+        review_uuid UUID DEFAULT uuidv7(),
         content VARCHAR(255),
         rating_star INTEGER NOT NULL,
         product_id BIGINT,
@@ -59,6 +60,9 @@ export async function initDb() {
         last_modified_by VARCHAR(255),
         last_modified_on TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
+
+      -- PostgreSQL 18 B-tree Skip Scan composite index
+      CREATE INDEX IF NOT EXISTS idx_rating_prod_star ON rating (product_id, rating_star);
     `;
     console.log("[Rating Service] Database table 'rating' ready.");
   } catch (err) {
