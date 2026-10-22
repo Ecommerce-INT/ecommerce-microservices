@@ -12,6 +12,7 @@ services:
     container_name: postgres
     environment:
       POSTGRES_DB: ecommerce
+      PGDATA: /var/lib/postgresql/data
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     ports:
@@ -20,7 +21,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - ./deploy/postgres/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d ecommerce"]
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d ecommerce"]
       interval: 5s
       timeout: 5s
       retries: 20
