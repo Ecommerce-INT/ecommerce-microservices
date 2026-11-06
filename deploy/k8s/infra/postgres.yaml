@@ -52,11 +52,9 @@ spec:
                   key: POSTGRES_PASSWORD
             - name: POSTGRES_DB
               value: ecommerce
-            - name: PGDATA
-              value: /var/lib/postgresql/data
           volumeMounts:
             - name: postgres-data
-              mountPath: /var/lib/postgresql/data
+              mountPath: /var/lib/postgresql
             - name: init-scripts
               mountPath: /docker-entrypoint-initdb.d
               readOnly: true
