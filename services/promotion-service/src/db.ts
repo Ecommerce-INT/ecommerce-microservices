@@ -48,6 +48,7 @@ export async function initDb() {
     await client`
       CREATE TABLE IF NOT EXISTS promotion (
         id BIGSERIAL PRIMARY KEY,
+        promotion_uuid UUID DEFAULT uuidv7(),
         name VARCHAR(255) NOT NULL,
         slug VARCHAR(255) NOT NULL,
         description VARCHAR(255),
@@ -68,22 +69,23 @@ export async function initDb() {
         last_modified_by VARCHAR(255),
         last_modified_on TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
       );
-    `;
-    await client`
       CREATE TABLE IF NOT EXISTS tax_class (
         id BIGSERIAL PRIMARY KEY,
+        tax_class_uuid UUID DEFAULT uuidv7(),
         name VARCHAR(255) NOT NULL UNIQUE
       );
-    `;
-    await client`
       CREATE TABLE IF NOT EXISTS tax_rate (
         id BIGSERIAL PRIMARY KEY,
+        tax_rate_uuid UUID DEFAULT uuidv7(),
         rate NUMERIC(10,4) NOT NULL,
         country_id BIGINT NOT NULL,
         state_or_province_id BIGINT,
         zip_code VARCHAR(50),
         tax_class_id BIGINT REFERENCES tax_class(id)
       );
+
+      -- PostgreSQL 18 B-tree Skip Scan composite index
+      CREATE INDEX IF NOT EXISTS idx_promotion_code_active ON promotion (coupon_code, is_active);
     `;
     console.log("[Promotion Service] Database tables 'promotion', 'tax_class', 'tax_rate' ready.");
   } catch (err) {

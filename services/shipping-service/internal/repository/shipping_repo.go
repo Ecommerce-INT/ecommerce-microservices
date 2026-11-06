@@ -33,11 +33,15 @@ func (r *ShippingRepository) InitSchema(ctx context.Context) {
 		CREATE TABLE IF NOT EXISTS order_items (
 			order_id INT NOT NULL,
 			product_id INT NOT NULL,
+			item_uuid UUID DEFAULT uuidv7(),
 			ordered_quantity INT DEFAULT 1,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			PRIMARY KEY (order_id, product_id)
 		);
+
+		-- PostgreSQL 18 B-tree Skip Scan composite index
+		CREATE INDEX IF NOT EXISTS idx_order_items_product_order ON order_items (product_id, order_id);
 	`
 	if _, err := r.db.Exec(ctx, query); err != nil {
 		log.Printf("[Shipping Service] Notice during schema verification: %v", err)

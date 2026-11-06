@@ -34,6 +34,7 @@ func (r *ProductRepository) InitSchema(ctx context.Context) {
 	query := `
 		CREATE TABLE IF NOT EXISTS categories (
 			category_id SERIAL PRIMARY KEY,
+			category_uuid UUID DEFAULT uuidv7(),
 			category_title VARCHAR(255) NOT NULL,
 			image_url VARCHAR(255),
 			parent_category_id INT REFERENCES categories(category_id),
@@ -43,6 +44,7 @@ func (r *ProductRepository) InitSchema(ctx context.Context) {
 
 		CREATE TABLE IF NOT EXISTS products (
 			product_id SERIAL PRIMARY KEY,
+			product_uuid UUID DEFAULT uuidv7(),
 			product_title VARCHAR(255) NOT NULL,
 			image_url VARCHAR(255),
 			sku VARCHAR(100) UNIQUE,
@@ -61,6 +63,10 @@ func (r *ProductRepository) InitSchema(ctx context.Context) {
 			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			PRIMARY KEY (user_id, product_id, like_date)
 		);
+
+		-- PostgreSQL 18 B-tree Skip Scan composite index optimizations
+		CREATE INDEX IF NOT EXISTS idx_products_cat_sku ON products (category_id, sku);
+		CREATE INDEX IF NOT EXISTS idx_favourites_user_prod ON favourites (user_id, product_id);
 	`
 	if _, err := r.db.Exec(ctx, query); err != nil {
 		log.Printf("[Product Service] Notice during schema verification: %v", err)

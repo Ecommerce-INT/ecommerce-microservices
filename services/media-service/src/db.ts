@@ -48,6 +48,7 @@ export async function initDb() {
     await client`
       CREATE TABLE IF NOT EXISTS media (
         id BIGSERIAL PRIMARY KEY,
+        file_uuid UUID DEFAULT uuidv7(),
         caption VARCHAR(255),
         file_name VARCHAR(255),
         file_path TEXT,

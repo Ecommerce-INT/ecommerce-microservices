@@ -30,7 +30,7 @@ A cloud-native e-commerce platform built around 11 backend microservices and 2 S
 - **Backend (Go)**: 7 services using Go 1.27, `chi/v5` (routing), and `bob/pgx` (PostgreSQL).
 - **Backend (Bun)**: 4 services using Bun 1.4+, Hono, and Drizzle ORM v1 (`Bun.sql` / `Bun.S3Client`).
 - **Frontend**: 2 applications using SvelteKit 3, Svelte 5 (runes), and Tailwind CSS 4.
-- **Infrastructure**: Apache APISIX (API Gateway), Keycloak (OIDC), PostgreSQL 16, Redis 7.4, Kafka 3.9, OpenSearch 3.9, and RustFS (S3-compatible).
+- **Infrastructure**: Apache APISIX (API Gateway), Keycloak (OIDC), PostgreSQL 18, Redis 7.4, Kafka 3.9, OpenSearch 3.9, and RustFS (S3-compatible).
 
 ### Services and Applications
 

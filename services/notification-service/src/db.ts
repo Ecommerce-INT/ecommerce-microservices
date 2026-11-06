@@ -48,6 +48,7 @@ export async function initDb() {
     await client`
       CREATE TABLE IF NOT EXISTS notifications (
         id BIGSERIAL PRIMARY KEY,
+        notification_uuid UUID DEFAULT uuidv7(),
         user_id VARCHAR(255),
         title VARCHAR(255),
         message TEXT,
@@ -59,6 +60,7 @@ export async function initDb() {
     await client`
       CREATE TABLE IF NOT EXISTS payment_notifications (
         id BIGSERIAL PRIMARY KEY,
+        notification_uuid UUID DEFAULT uuidv7(),
         payment_id BIGINT,
         user_id VARCHAR(255),
         order_id BIGINT,
@@ -67,6 +69,9 @@ export async function initDb() {
         payment_status VARCHAR(50),
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
+
+      -- PostgreSQL 18 B-tree Skip Scan composite index
+      CREATE INDEX IF NOT EXISTS idx_notifications_user_status ON notifications (user_id, status);
     `;
     console.log("[Notification Service] Database tables ready.");
   } catch (err) {
