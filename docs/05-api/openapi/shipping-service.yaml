@@ -1,0 +1,329 @@
+openapi: 3.1.0
+info:
+  title: shipping-service API
+  version: "1.0.0"
+  description: |
+    Đặc tả OpenAPI **as-is** của `shipping-service` (Go, chi, port `8087`) — CRUD dòng hàng vận chuyển (`order_items`,
+    khóa `(orderId, productId)`). Mô tả đúng hành vi code hiện tại, không phải thiết kế đích.
+
+    - Tài liệu service: [../../03-services/shipping-service.md](../../03-services/shipping-service.md)
+    - Định tuyến gateway: [../gateway-routing.md](../gateway-routing.md) · Danh mục API: [../api-catalog.md](../api-catalog.md)
+
+    **Quy ước trong spec này**
+    - Path ghi theo **path tại gateway APISIX**. Route `shipping` chỉ có `uri: /shipping/api/shippings/*` và **không rewrite**
+      → path tới service giữ nguyên. Path gốc `/shipping/api/shippings` (list, POST, PUT) **không khớp** `/*` → 404 tại gateway (ISSUE-15);
+      các operation đó được ghi `x-gateway-route: none` và chỉ gọi trực tiếp được.
+    - Service đăng ký `/shipping/api/shippings` và `/api/shippings` (`services/shipping-service/internal/handler/shipping_handler.go:29-31`);
+      không có route gateway `/api/shippings`.
+    - Thành công: **JSON thô**; lỗi: `ErrorVm {statusCode, title, detail}` (ISSUE-29, ISSUE-93).
+    - Bearer chỉ xác thực, không kiểm role (ISSUE-01). Không validate input (ISSUE-81).
+    - DB không kết nối → POST/PUT/DELETE vẫn 200, GET theo id → 404, list → rỗng (ISSUE-28).
+    - Mọi route chịu `limit-count` global của APISIX (429 — ISSUE-61).
+  x-source:
+    - services/shipping-service/internal/handler/shipping_handler.go
+    - services/shipping-service/internal/model/shipping.go
+    - services/shipping-service/internal/service/shipping_service.go
+    - services/shipping-service/internal/repository/shipping_repo.go
+    - deploy/apisix/apisix.yaml
+servers:
+  - url: http://localhost:9080
+    description: APISIX gateway (docker compose local). Path trong spec là path tại gateway.
+  - url: http://localhost:8087
+    description: |
+      Gọi trực tiếp shipping-service (port publish ra host, không kiểm token — ISSUE-02). Path `/shipping/api/shippings...` vẫn hợp lệ;
+      ngoài ra có bản không prefix `/api/shippings...`.
+tags:
+  - name: shippings
+    description: Dòng hàng vận chuyển (route `shipping`, Bearer).
+  - name: health
+    description: Health check tĩnh, không có route gateway.
+
+paths:
+  /actuator/health:
+    servers:
+      - url: http://localhost:8087
+        description: Chỉ gọi trực tiếp — không có route gateway.
+    get:
+      operationId: shippingHealth
+      tags: [health]
+      summary: Health check (luôn UP)
+      description: 'Payload tĩnh `{"status":"UP","components":{"db":{"status":"UP"}}}` (ISSUE-36). Alias: `/shipping/actuator/health`.'
+      x-upstream-path: [/actuator/health, /shipping/actuator/health]
+      x-gateway-route: none — not exposed
+      x-known-issues: [ISSUE-36]
+      security: []
+      responses:
+        "200":
+          description: Luôn UP.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Health" }
+
+  /shipping/api/shippings:
+    servers:
+      - url: http://localhost:8087
+        description: 'Chỉ gọi trực tiếp — `/shipping/api/shippings` không khớp route `/shipping/api/shippings/*` (ISSUE-15). Alias không prefix: `/api/shippings`.'
+    get:
+      operationId: listShippings
+      tags: [shippings]
+      summary: Tất cả order item
+      description: 'Sắp `order_id DESC`, bọc trong `collection`. Nguồn: `shipping_handler.go:48-57`, `shipping_repo.go:57-74`.'
+      x-upstream-path: [/shipping/api/shippings, /api/shippings]
+      x-gateway-route: none — not exposed (ISSUE-15)
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-15, ISSUE-01]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Danh sách order item.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrderItemCollection" }
+        "500": { $ref: "#/components/responses/InternalError" }
+    post:
+      operationId: saveShipping
+      tags: [shippings]
+      summary: Upsert order item
+      description: |
+        `INSERT … ON CONFLICT (order_id, product_id) DO UPDATE SET ordered_quantity, updated_at`. Không validate:
+        `orderedQuantity` 0/âm, id 0 được chấp nhận; thiếu quantity lưu 0 (không phải default 1); không kiểm order/product tồn tại (ISSUE-81).
+        Trả **echo body** (không đọc lại DB nên không có `createdAt/updatedAt` trừ khi client tự gửi).
+        Nguồn: `shipping_handler.go:102-115`, `shipping_repo.go:98-119`.
+      x-upstream-path: [/shipping/api/shippings, /api/shippings]
+      x-gateway-route: none — not exposed (ISSUE-15)
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-81, ISSUE-15, ISSUE-01, ISSUE-93]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OrderItemDto" }
+            example: { orderId: 101, productId: 202, orderedQuantity: 3 }
+      responses:
+        "200":
+          description: Echo body.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrderItemDto" }
+        "400": { $ref: "#/components/responses/BadRequestBody" }
+        "500": { $ref: "#/components/responses/InternalError" }
+    put:
+      operationId: updateShipping
+      tags: [shippings]
+      summary: Upsert order item (giống hệt POST)
+      description: 'Service `Update` gọi lại `Save` (ISSUE-81). Nguồn: `shipping_handler.go:117-130`, `shipping_service.go:45-47`.'
+      x-upstream-path: [/shipping/api/shippings, /api/shippings]
+      x-gateway-route: none — not exposed (ISSUE-15)
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-81, ISSUE-15, ISSUE-01, ISSUE-93]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OrderItemDto" }
+      responses:
+        "200":
+          description: Echo body.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrderItemDto" }
+        "400": { $ref: "#/components/responses/BadRequestBody" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /shipping/api/shippings/find:
+    get:
+      operationId: findShippingByBody
+      tags: [shippings]
+      summary: Tìm order item theo khóa trong BODY của GET
+      description: |
+        GET có body JSON `OrderItemId` (ISSUE-81) — nhiều client/proxy bỏ body của GET; body rỗng → 400.
+        Nguồn: `shipping_handler.go:83-100`.
+      x-upstream-path: [/shipping/api/shippings/find, /api/shippings/find]
+      x-gateway-route: shipping
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-81, ISSUE-01]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OrderItemId" }
+      responses:
+        "200":
+          description: Order item.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrderItemDto" }
+        "400": { $ref: "#/components/responses/BadRequestBody" }
+        "401": { $ref: "#/components/responses/GatewayUnauthorized" }
+        "404": { $ref: "#/components/responses/OrderItemNotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /shipping/api/shippings/delete:
+    delete:
+      operationId: deleteShippingByBody
+      tags: [shippings]
+      summary: Xóa order item theo khóa trong BODY của DELETE
+      description: '200 `true` kể cả không tồn tại (ISSUE-81). Nguồn: `shipping_handler.go:152-165`.'
+      x-upstream-path: [/shipping/api/shippings/delete, /api/shippings/delete]
+      x-gateway-route: shipping
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-81, ISSUE-01]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OrderItemId" }
+      responses:
+        "200":
+          description: Luôn `true` khi không lỗi.
+          content:
+            application/json:
+              schema: { type: boolean, const: true }
+        "400": { $ref: "#/components/responses/BadRequestBody" }
+        "401": { $ref: "#/components/responses/GatewayUnauthorized" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /shipping/api/shippings/{orderId}/{productId}:
+    parameters:
+      - name: orderId
+        in: path
+        required: true
+        description: '`strconv.Atoi`; không phải số → 400 "Invalid orderId".'
+        schema: { type: integer }
+      - name: productId
+        in: path
+        required: true
+        description: '`strconv.Atoi`; không phải số → 400 "Invalid productId".'
+        schema: { type: integer }
+    get:
+      operationId: getShippingById
+      tags: [shippings]
+      summary: Tìm order item theo path
+      description: 'DB không kết nối → 404. Nguồn: `shipping_handler.go:59-81`.'
+      x-upstream-path:
+        - "/shipping/api/shippings/{orderId}/{productId}"
+        - "/api/shippings/{orderId}/{productId}"
+      x-gateway-route: shipping
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-01]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Order item.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrderItemDto" }
+        "400": { $ref: "#/components/responses/BadRequestPathId" }
+        "401": { $ref: "#/components/responses/GatewayUnauthorized" }
+        "404": { $ref: "#/components/responses/OrderItemNotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+    delete:
+      operationId: deleteShippingById
+      tags: [shippings]
+      summary: Xóa order item theo path
+      description: '200 `true` kể cả không tồn tại (ISSUE-81). Nguồn: `shipping_handler.go:132-150`.'
+      x-upstream-path:
+        - "/shipping/api/shippings/{orderId}/{productId}"
+        - "/api/shippings/{orderId}/{productId}"
+      x-gateway-route: shipping
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-81, ISSUE-01]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Luôn `true` khi không lỗi.
+          content:
+            application/json:
+              schema: { type: boolean, const: true }
+        "400": { $ref: "#/components/responses/BadRequestPathId" }
+        "401": { $ref: "#/components/responses/GatewayUnauthorized" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Access token Keycloak (realm `ecommerce`), verify bởi APISIX `openid-connect` (`bearer_only`, JWKS, RS256).
+        Không kiểm role (ISSUE-01); service không tự verify (ISSUE-02). Với operation `x-gateway-route: none`,
+        không có gì kiểm token (gọi trực tiếp service).
+  responses:
+    GatewayUnauthorized:
+      description: APISIX `openid-connect` từ chối (thiếu/sai/hết hạn token). Body do APISIX sinh, không phải `ErrorVm`.
+    BadRequestBody:
+      description: '"Invalid request body".'
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorVm" }
+          example: { statusCode: "400", title: Bad request, detail: Invalid request body }
+    BadRequestPathId:
+      description: '"Invalid orderId" hoặc "Invalid productId".'
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorVm" }
+    OrderItemNotFound:
+      description: '`detail` = "not found: order item not found for orderId: <o>, productId: <p>".'
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorVm" }
+          example: { statusCode: "404", title: Not found, detail: "not found: order item not found for orderId: 101, productId: 202" }
+    InternalError:
+      description: Lỗi DB; `detail` = thông điệp lỗi nguyên văn (ISSUE-93).
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorVm" }
+  schemas:
+    Health:
+      type: object
+      properties:
+        status: { type: string, const: UP }
+        components:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              status: { type: string, const: UP }
+      example: { status: UP, components: { db: { status: UP } } }
+    ErrorVm:
+      type: object
+      description: '`response.ErrorVm` (`services/shared/response/response.go:6-10`).'
+      required: [statusCode, title, detail]
+      properties:
+        statusCode: { type: string, enum: ["400", "404", "500"] }
+        title: { type: string, enum: [Bad request, Not found, Internal server error] }
+        detail: { type: string }
+    OrderItemId:
+      type: object
+      description: '`model.OrderItemId` (`internal/model/shipping.go:5-8`). Field vắng = 0.'
+      properties:
+        orderId: { type: integer }
+        productId: { type: integer }
+    OrderItemDto:
+      type: object
+      description: '`model.OrderItemDto` (`internal/model/shipping.go:10-16`).'
+      properties:
+        orderId: { type: integer }
+        productId: { type: integer }
+        orderedQuantity: { type: integer, description: 'Không validate; vắng → 0.' }
+        createdAt: { type: string, format: date-time, description: 'Chỉ có khi đọc từ DB (GET); POST/PUT echo nên thường vắng.' }
+        updatedAt: { type: string, format: date-time }
+    OrderItemCollection:
+      type: object
+      description: '`model.DtoCollectionResponse[OrderItemDto]`.'
+      properties:
+        collection:
+          type: array
+          items: { $ref: "#/components/schemas/OrderItemDto" }

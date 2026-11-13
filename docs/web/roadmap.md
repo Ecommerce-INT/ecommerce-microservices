@@ -114,5 +114,5 @@ Explicitly out of scope until asked for:
 - [ ] Favourites, ratings/reviews UI, search-suggest dropdown (backend endpoints exist; the old app never wired them)
 - [ ] Admin stubs: users, inventory, shipping, settings — product decisions required
 - [ ] Migration to whatever replaces the experimental remote-functions/RF API surface once SvelteKit stabilises it
-- [ ] Better-Auth / identity changes — depends on the backend phase of the [architecture revamp](../architecture-revamp-plan.md)
+- [ ] Better-Auth / identity changes — depends on the backend phase of the [architecture revamp](../02-architecture/target-revamp/architecture-revamp-plan.md)
 - [ ] Server-side carts (the cart stays client-only for now)

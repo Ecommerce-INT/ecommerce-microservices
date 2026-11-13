@@ -1,0 +1,643 @@
+openapi: 3.1.0
+info:
+  title: order-service API
+  version: "1.0.0"
+  description: |
+    Đặc tả OpenAPI **as-is** của `order-service` (Go, chi, port `8084`) — CRUD giỏ hàng (carts) và đơn hàng (orders).
+    Mô tả đúng hành vi code hiện tại, không phải thiết kế đích.
+
+    - Tài liệu service: [../../03-services/order-service.md](../../03-services/order-service.md)
+    - Định tuyến gateway: [../gateway-routing.md](../gateway-routing.md) · Danh mục API: [../api-catalog.md](../api-catalog.md)
+
+    **Quy ước trong spec này**
+    - Path ghi theo **path tại gateway APISIX**; `x-upstream-path` là path sau `proxy-rewrite` (`^/(.*)` → `/order/$1`).
+      Service đăng ký route ở `/api/...` và `/order/api/...` (`services/order-service/internal/handler/order_handler.go:28-36`).
+    - Thành công: **JSON thô**; lỗi: `ErrorVm {statusCode, title, detail}` (ISSUE-29); 500 trả lỗi pgx nguyên văn (ISSUE-93).
+    - Mọi route Bearer (route `order-carts`, `order-orders`) — chỉ xác thực, **không kiểm role, không lọc theo user** (ISSUE-01, ISSUE-49).
+      Không handler nào đọc danh tính từ token.
+    - Đơn hàng không có trạng thái, mỗi order chỉ một `productId`, không số lượng (ISSUE-20); `orderFee` tin client (ISSUE-21).
+    - DB không kết nối → service vẫn chạy, trả stub (id = 1, mảng rỗng, 404) (ISSUE-28).
+    - Mọi route chịu `limit-count` global của APISIX (429 — ISSUE-61).
+  x-source:
+    - services/order-service/internal/handler/order_handler.go
+    - services/order-service/internal/model/order.go
+    - services/order-service/internal/service/order_service.go
+    - services/order-service/internal/repository/order_repository.go
+    - deploy/apisix/apisix.yaml
+servers:
+  - url: http://localhost:9080
+    description: APISIX gateway (docker compose local). Path trong spec là path tại gateway.
+  - url: http://localhost:8084
+    description: Gọi trực tiếp order-service (port publish ra host, không kiểm token — ISSUE-02). Path gateway vẫn hợp lệ.
+tags:
+  - name: carts
+    description: Giỏ hàng (route `order-carts`, Bearer).
+  - name: orders
+    description: Đơn hàng (route `order-orders`, Bearer).
+  - name: health
+    description: Health check tĩnh, không có route gateway.
+
+paths:
+  /actuator/health:
+    servers:
+      - url: http://localhost:8084
+        description: Chỉ gọi trực tiếp — không có route gateway.
+    get:
+      operationId: orderHealth
+      tags: [health]
+      summary: Health check (luôn UP)
+      description: 'Payload tĩnh `{"status":"UP","components":{"db":{"status":"UP"}}}` (ISSUE-36). Alias: `/order/actuator/health`, `/health`.'
+      x-upstream-path: [/actuator/health, /order/actuator/health, /health]
+      x-gateway-route: none — not exposed
+      x-known-issues: [ISSUE-36]
+      security: []
+      responses:
+        "200":
+          description: Luôn UP.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Health" }
+
+  # ======================= Carts =======================
+  /api/carts:
+    get:
+      operationId: listCarts
+      tags: [carts]
+      summary: Tất cả cart (kèm orders) của mọi user
+      description: 'Sắp `cart_id ASC`, mỗi cart nạp `order` bằng query riêng (N+1). Nguồn: `order_handler.go:64-71`, `order_repository.go:88-108`.'
+      x-upstream-path: /order/api/carts
+      x-gateway-route: order-carts
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-01, ISSUE-49]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Mảng cart.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/CartDto" }
+        "401": { $ref: "#/components/responses/GatewayUnauthorized" }
+        "500": { $ref: "#/components/responses/InternalError" }
+    post:
+      operationId: createCart
+      tags: [carts]
+      summary: Tạo cart (+ orders lồng nhau)
+      description: |
+        Insert cart (`user_id` từ body), sau đó insert từng phần tử `order` với `cart_id` mới — **lỗi insert order bị bỏ qua** (ISSUE-24);
+        `order` được đọc lại từ DB. Trả 200 (không phải 201). DB không kết nối → echo body với `cartId: 1`.
+        Nguồn: `order_handler.go:106-119`, `order_repository.go:176-210`.
+      x-upstream-path: /order/api/carts
+      x-gateway-route: order-carts
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-24, ISSUE-49, ISSUE-01, ISSUE-93]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CartDto" }
+            example: { userId: 3, order: [ { orderDesc: "…", orderFee: 100, productId: 15 } ] }
+      responses:
+        "200":
+          description: Cart vừa tạo, có `cartId`, `user`, `order` (nếu body có orders).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CartDto" }
+        "400": { $ref: "#/components/responses/BadRequestBody" }
+        "401": { $ref: "#/components/responses/GatewayUnauthorized" }
+        "500": { $ref: "#/components/responses/InternalError" }
+    put:
+      operationId: updateCartFromBody
+      tags: [carts]
+      summary: Cập nhật cart theo `cartId` trong body
+      description: |
+        Chỉ đổi `user_id` (`COALESCE`: `userId` null → giữ nguyên) và `updated_at`; mảng `order` bị bỏ qua.
+        Nguồn: `order_handler.go:121-142`, `order_repository.go:212-230`.
+      x-upstream-path: /order/api/carts
+      x-gateway-route: order-carts
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-01, ISSUE-49]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CartDto" }
+            example: { cartId: 7, userId: 4 }
+      responses:
+        "200":
+          description: Cart đọc lại từ DB.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CartDto" }
+        "400":
+          description: '"Invalid request body" hoặc "cartId is required for update".'
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorVm" }
+        "401": { $ref: "#/components/responses/GatewayUnauthorized" }
+        "404": { $ref: "#/components/responses/CartNotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /api/carts/all:
+    get:
+      operationId: listCartsPaged
+      tags: [carts]
+      summary: Cart phân trang
+      description: |
+        Tham số không phải số → 0 rồi áp default; `page < 0` → 0; `size <= 0` → 10.
+        `sortBy` = `userId`/`user_id` (không phân biệt hoa thường) → `user_id`, khác → `cart_id`; `sortOrder` = `desc` → DESC, khác → ASC.
+        Nguồn: `order_handler.go:73-85`, `order_service.go:33-62`, `order_repository.go:110-152`.
+      x-upstream-path: /order/api/carts/all
+      x-gateway-route: order-carts
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-01, ISSUE-49]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Size"
+        - name: sortBy
+          in: query
+          schema: { type: string, default: cartId, description: 'userId | user_id → user_id; khác → cart_id.' }
+        - $ref: "#/components/parameters/SortOrder"
+      responses:
+        "200":
+          description: Trang cart.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CartPage" }
+        "401": { $ref: "#/components/responses/GatewayUnauthorized" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /api/carts/{cartId}:
+    parameters:
+      - name: cartId
+        in: path
+        required: true
+        description: '`strconv.Atoi`; không phải số → 400 "Invalid cartId".'
+        schema: { type: integer }
+    get:
+      operationId: getCartById
+      tags: [carts]
+      summary: Chi tiết cart (kèm orders)
+      description: 'DB không kết nối → 404. Nguồn: `order_handler.go:87-104`.'
+      x-upstream-path: /order/api/carts/{cartId}
+      x-gateway-route: order-carts
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-01, ISSUE-49]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Cart.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CartDto" }
+        "400": { $ref: "#/components/responses/BadRequestCartId" }
+        "401": { $ref: "#/components/responses/GatewayUnauthorized" }
+        "404": { $ref: "#/components/responses/CartNotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+    put:
+      operationId: updateCartById
+      tags: [carts]
+      summary: Cập nhật cart theo path
+      description: 'Như PUT /api/carts nhưng id lấy từ path. Nguồn: `order_handler.go:144-167`.'
+      x-upstream-path: /order/api/carts/{cartId}
+      x-gateway-route: order-carts
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-01, ISSUE-49]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CartDto" }
+            example: { userId: 4 }
+      responses:
+        "200":
+          description: Cart đọc lại từ DB.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CartDto" }
+        "400":
+          description: '"Invalid cartId" hoặc "Invalid request body".'
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorVm" }
+        "401": { $ref: "#/components/responses/GatewayUnauthorized" }
+        "404": { $ref: "#/components/responses/CartNotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+    delete:
+      operationId: deleteCartById
+      tags: [carts]
+      summary: Xóa cart (cascade orders)
+      description: '200 `true` kể cả không tồn tại; FK `orders.cart_id ON DELETE CASCADE` xóa luôn orders. Nguồn: `order_handler.go:169-181`.'
+      x-upstream-path: /order/api/carts/{cartId}
+      x-gateway-route: order-carts
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-01, ISSUE-49]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Luôn `true` khi không lỗi.
+          content:
+            application/json:
+              schema: { type: boolean, const: true }
+        "400": { $ref: "#/components/responses/BadRequestCartId" }
+        "401": { $ref: "#/components/responses/GatewayUnauthorized" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  # ======================= Orders =======================
+  /api/orders:
+    get:
+      operationId: listOrders
+      tags: [orders]
+      summary: Tất cả order của MỌI user (mảng thô, bỏ qua query)
+      description: |
+        Sắp `order_id ASC`, `LEFT JOIN carts`. Query param bị bỏ qua; BFF mong đợi Page (ISSUE-48) và tưởng gateway lọc theo JWT (ISSUE-49).
+        Nguồn: `order_handler.go:198-205`, `order_repository.go:312-331`.
+      x-upstream-path: /order/api/orders
+      x-gateway-route: order-orders
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-48, ISSUE-49, ISSUE-01]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Mảng order.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/OrderDto" }
+        "401": { $ref: "#/components/responses/GatewayUnauthorized" }
+        "500": { $ref: "#/components/responses/InternalError" }
+    post:
+      operationId: createOrder
+      tags: [orders]
+      summary: Tạo order
+      description: |
+        `orderDate` parse RFC3339 hoặc `2006-01-02T15:04:05`, không parse được/rỗng → `CURRENT_TIMESTAMP`. `orderFee` lưu nguyên giá client gửi (ISSUE-21).
+        `cart.cartId` (nếu có) gắn order với cart; BFF checkout không gửi cart → order không gắn user (ISSUE-76). Không idempotency (ISSUE-23).
+        Trả **200** (không phải 201) với order đọc lại từ DB. DB không kết nối → echo body với `orderId: 1`.
+        Nguồn: `order_handler.go:255-268`, `order_repository.go:401-431`.
+      x-upstream-path: /order/api/orders
+      x-gateway-route: order-orders
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-21, ISSUE-20, ISSUE-76, ISSUE-23, ISSUE-27, ISSUE-01, ISSUE-93]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OrderDto" }
+            example: { orderDate: "2026-11-12T03:15:20.123Z", orderDesc: "EzBuy order", orderFee: 22040000, productId: 15 }
+      responses:
+        "200":
+          description: Order vừa tạo.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrderDto" }
+        "400": { $ref: "#/components/responses/BadRequestBody" }
+        "401": { $ref: "#/components/responses/GatewayUnauthorized" }
+        "500":
+          description: Lỗi DB (vd `cart.cartId` không tồn tại → vi phạm FK).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorVm" }
+    put:
+      operationId: updateOrderFromBody
+      tags: [orders]
+      summary: Cập nhật order theo `orderId` trong body
+      description: |
+        `COALESCE` từng cột: field null giữ nguyên, nhưng `orderDesc` vắng mặt gửi `''` → **xóa** `order_desc` (ISSUE-59). `orderDate` không cập nhật được.
+        Nguồn: `order_handler.go:270-291`, `order_repository.go:433-459`.
+      x-upstream-path: /order/api/orders
+      x-gateway-route: order-orders
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-59, ISSUE-21, ISSUE-01, ISSUE-93]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OrderDto" }
+      responses:
+        "200":
+          description: Order đọc lại từ DB.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrderDto" }
+        "400":
+          description: '"Invalid request body" hoặc "orderId is required for update".'
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorVm" }
+        "401": { $ref: "#/components/responses/GatewayUnauthorized" }
+        "404": { $ref: "#/components/responses/OrderNotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /api/orders/all:
+    get:
+      operationId: listOrdersPaged
+      tags: [orders]
+      summary: Order phân trang (mọi user)
+      description: |
+        Tham số không phải số → 0 rồi áp default; `page < 0` → 0; `size <= 0` → 10.
+        `sortBy` ∈ `orderFee|order_fee` → `order_fee`, `orderDate|order_date` → `order_date`, khác → `order_id`; `sortOrder` = `desc` → DESC.
+        Nguồn: `order_handler.go:207-219`, `order_repository.go:333-379`.
+      x-upstream-path: /order/api/orders/all
+      x-gateway-route: order-orders
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-49, ISSUE-01]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Size"
+        - name: sortBy
+          in: query
+          schema: { type: string, default: orderId, description: 'orderFee | order_fee | orderDate | order_date; khác → order_id.' }
+        - $ref: "#/components/parameters/SortOrder"
+      responses:
+        "200":
+          description: Trang order.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrderPage" }
+        "401": { $ref: "#/components/responses/GatewayUnauthorized" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /api/orders/existOrderId:
+    get:
+      operationId: existsOrderById
+      tags: [orders]
+      summary: Kiểm tra order tồn tại
+      description: 'DB không kết nối → `false`. Nguồn: `order_handler.go:240-253`.'
+      x-upstream-path: /order/api/orders/existOrderId
+      x-gateway-route: order-orders
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-01]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: orderId
+          in: query
+          required: true
+          description: '`strconv.Atoi`; thiếu/không phải số → 400 "Invalid orderId".'
+          schema: { type: integer }
+      responses:
+        "200":
+          description: '`true` / `false`.'
+          content:
+            application/json:
+              schema: { type: boolean }
+        "400": { $ref: "#/components/responses/BadRequestOrderId" }
+        "401": { $ref: "#/components/responses/GatewayUnauthorized" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /api/orders/{orderId}:
+    parameters:
+      - name: orderId
+        in: path
+        required: true
+        description: '`strconv.Atoi`; không phải số → 400 "Invalid orderId".'
+        schema: { type: integer }
+    get:
+      operationId: getOrderById
+      tags: [orders]
+      summary: Chi tiết order
+      description: 'Không kiểm order thuộc user nào (ISSUE-49). DB không kết nối → 404. Nguồn: `order_handler.go:221-238`.'
+      x-upstream-path: /order/api/orders/{orderId}
+      x-gateway-route: order-orders
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-49, ISSUE-01]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Order.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrderDto" }
+        "400": { $ref: "#/components/responses/BadRequestOrderId" }
+        "401": { $ref: "#/components/responses/GatewayUnauthorized" }
+        "404": { $ref: "#/components/responses/OrderNotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+    put:
+      operationId: updateOrderById
+      tags: [orders]
+      summary: Cập nhật order theo path
+      description: 'Như PUT /api/orders (ISSUE-59). Nguồn: `order_handler.go:293-316`.'
+      x-upstream-path: /order/api/orders/{orderId}
+      x-gateway-route: order-orders
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-59, ISSUE-21, ISSUE-01, ISSUE-93]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OrderDto" }
+      responses:
+        "200":
+          description: Order đọc lại từ DB.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrderDto" }
+        "400":
+          description: '"Invalid orderId" hoặc "Invalid request body".'
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorVm" }
+        "401": { $ref: "#/components/responses/GatewayUnauthorized" }
+        "404": { $ref: "#/components/responses/OrderNotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+    delete:
+      operationId: deleteOrderById
+      tags: [orders]
+      summary: Xóa order
+      description: '200 `true` kể cả không tồn tại. Nguồn: `order_handler.go:318-330`.'
+      x-upstream-path: /order/api/orders/{orderId}
+      x-gateway-route: order-orders
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-01]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Luôn `true` khi không lỗi.
+          content:
+            application/json:
+              schema: { type: boolean, const: true }
+        "400": { $ref: "#/components/responses/BadRequestOrderId" }
+        "401": { $ref: "#/components/responses/GatewayUnauthorized" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Access token Keycloak (realm `ecommerce`), verify bởi APISIX `openid-connect` (`bearer_only`, JWKS, RS256).
+        Không kiểm role (ISSUE-01); service không tự verify (ISSUE-02) và không dùng danh tính (ISSUE-49).
+  parameters:
+    Page:
+      name: page
+      in: query
+      description: 'Không phải số → 0; âm → 0.'
+      schema: { type: integer, default: 0, minimum: 0 }
+    Size:
+      name: size
+      in: query
+      description: 'Không phải số hoặc ≤ 0 → 10.'
+      schema: { type: integer, default: 10 }
+    SortOrder:
+      name: sortOrder
+      in: query
+      description: '`desc` (không phân biệt hoa thường) → DESC; khác → ASC.'
+      schema: { type: string, default: asc, enum: [asc, desc, ASC, DESC] }
+  responses:
+    GatewayUnauthorized:
+      description: APISIX `openid-connect` từ chối (thiếu/sai/hết hạn token). Body do APISIX sinh, không phải `ErrorVm`.
+    BadRequestBody:
+      description: '"Invalid request body".'
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorVm" }
+          example: { statusCode: "400", title: Bad request, detail: Invalid request body }
+    BadRequestCartId:
+      description: '"Invalid cartId".'
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorVm" }
+    BadRequestOrderId:
+      description: '"Invalid orderId".'
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorVm" }
+    CartNotFound:
+      description: '"cart not found".'
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorVm" }
+          example: { statusCode: "404", title: Not found, detail: cart not found }
+    OrderNotFound:
+      description: '"order not found".'
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorVm" }
+          example: { statusCode: "404", title: Not found, detail: order not found }
+    InternalError:
+      description: Lỗi DB/nội bộ; `detail` = thông điệp lỗi nguyên văn (ISSUE-93).
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorVm" }
+  schemas:
+    Health:
+      type: object
+      properties:
+        status: { type: string, const: UP }
+        components:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              status: { type: string, const: UP }
+      example: { status: UP, components: { db: { status: UP } } }
+    ErrorVm:
+      type: object
+      description: '`response.ErrorVm` (`services/shared/response/response.go:6-10`).'
+      required: [statusCode, title, detail]
+      properties:
+        statusCode: { type: string, enum: ["400", "404", "500"] }
+        title: { type: string, enum: [Bad request, Not found, Internal server error] }
+        detail: { type: string }
+    UserDto:
+      type: object
+      description: '`model.UserDto` — chỉ `id` được điền (từ `carts.user_id`).'
+      properties:
+        id: { type: integer, format: int64 }
+        fullname: { type: string }
+        username: { type: string }
+        email: { type: string }
+    ProductDto:
+      type: object
+      description: '`model.ProductDto` — có trong model nhưng **không bao giờ được điền**.'
+      properties:
+        productId: { type: integer }
+        productTitle: { type: string }
+        imageUrl: { type: string }
+        sku: { type: string }
+        priceUnit: { type: number, format: double }
+        quantity: { type: integer }
+    OrderDto:
+      type: object
+      description: '`model.OrderDto` (`internal/model/order.go:19-27`) — mọi field `omitempty`.'
+      properties:
+        orderId: { type: integer }
+        orderDate:
+          type: string
+          description: 'Response: `YYYY-MM-DDTHH:MM:SS` (to_char, không múi giờ). Request: RFC3339 hoặc `2006-01-02T15:04:05`.'
+          example: "2026-11-12T10:15:00"
+        orderDesc: { type: string }
+        orderFee: { type: number, format: double, description: 'Do client gửi, không tính lại (ISSUE-21, ISSUE-27).' }
+        productId: { type: integer, description: 'Chỉ một sản phẩm / order (ISSUE-20).' }
+        product: { $ref: "#/components/schemas/ProductDto" }
+        cart:
+          type: object
+          description: 'Response: `{cartId, userId}` khi order gắn cart. Request: chỉ đọc `cart.cartId`.'
+          properties:
+            cartId: { type: integer }
+            userId: { type: integer, format: int64 }
+    CartDto:
+      type: object
+      description: '`model.CartDto` (`internal/model/order.go:29-34`) — mọi field `omitempty`. Lưu ý mảng orders có tên JSON là `order`.'
+      properties:
+        cartId: { type: integer }
+        userId: { type: integer, format: int64, description: 'Integer — không khớp `sub` UUID của Keycloak (ISSUE-49).' }
+        order:
+          type: array
+          items: { $ref: "#/components/schemas/OrderDto" }
+        user: { $ref: "#/components/schemas/UserDto" }
+    PageBase:
+      type: object
+      description: '`model.PageResponse[T]` (`internal/model/order.go:36-46`). `last` = `number >= totalPages-1`.'
+      properties:
+        totalElements: { type: integer, format: int64 }
+        totalPages: { type: integer }
+        size: { type: integer }
+        number: { type: integer }
+        numberOfElements: { type: integer }
+        first: { type: boolean }
+        last: { type: boolean }
+        empty: { type: boolean }
+    CartPage:
+      allOf:
+        - $ref: "#/components/schemas/PageBase"
+        - type: object
+          properties:
+            content:
+              type: array
+              items: { $ref: "#/components/schemas/CartDto" }
+    OrderPage:
+      allOf:
+        - $ref: "#/components/schemas/PageBase"
+        - type: object
+          properties:
+            content:
+              type: array
+              items: { $ref: "#/components/schemas/OrderDto" }

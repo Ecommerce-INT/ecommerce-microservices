@@ -1,0 +1,297 @@
+openapi: 3.1.0
+info:
+  title: media-service API
+  version: "1.0.0"
+  description: |
+    Đặc tả OpenAPI **as-is** của `media-service` (Bun + Hono + Drizzle + `Bun.S3Client`, port `8083`) — upload, đọc metadata,
+    stream và xóa file media trên RustFS (S3-compatible). Mô tả đúng hành vi code hiện tại.
+
+    - Tài liệu service: [../../03-services/media-service.md](../../03-services/media-service.md)
+    - Định tuyến gateway: [../gateway-routing.md](../gateway-routing.md) · Danh mục API: [../api-catalog.md](../api-catalog.md)
+    - Danh mục lỗi: [../error-catalog.md](../error-catalog.md)
+
+    **Quy ước trong spec này**
+    - Path ghi theo **path tại gateway APISIX**. Route `media` chỉ có `uri: /media/medias/*` (không rewrite, có `openid-connect`)
+      → `POST /media/medias` và `GET /media/medias?ids=` **không khớp** (ISSUE-15). Service đăng ký route ở prefix `/media`
+      **và** ở gốc (`services/media-service/src/index.ts:133-137`).
+    - `security`: Bearer cho mọi path có route (kể cả stream file — ISSUE-63); không kiểm role (ISSUE-01).
+    - Không giới hạn kích thước/MIME, đọc toàn bộ file vào RAM (ISSUE-32). URL trả về build từ `PUBLIC_URL`
+      (mặc định `http://localhost:8083`) **không có** prefix `/media` (ISSUE-63).
+    - Lỗi: `{statusCode: "<code>", message}`; 500 trả nguyên `err.message` (ISSUE-93).
+  x-source:
+    - services/media-service/src/index.ts
+    - services/media-service/src/service.ts
+    - services/media-service/src/storage.ts
+    - services/media-service/src/schema.ts
+    - deploy/apisix/apisix.yaml
+servers:
+  - url: http://localhost:9080
+    description: APISIX gateway (docker compose local). Path trong spec là path tại gateway.
+  - url: http://localhost:8083
+    description: Gọi trực tiếp media-service (port publish ra host, không xác thực — ISSUE-02).
+tags:
+  - name: media
+    description: Quản lý media (route `media`).
+  - name: health
+    description: Health check tĩnh, không có route gateway.
+
+paths:
+  /actuator/health:
+    servers:
+      - url: http://localhost:8083
+        description: Chỉ gọi trực tiếp — không có route gateway.
+    get:
+      operationId: mediaHealth
+      tags: [health]
+      summary: Health check (luôn UP)
+      description: |
+        Payload tĩnh `db` + `storage` đều UP, không kiểm DB/S3 (ISSUE-36). Alias `/media/actuator/health`. Nguồn: `src/index.ts:27-38`.
+      x-upstream-path: [/actuator/health, /media/actuator/health]
+      x-gateway-route: none — not exposed
+      x-required-role: none
+      x-known-issues: [ISSUE-36]
+      security: []
+      responses:
+        "200":
+          description: Luôn UP.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Health" }
+
+  /media/medias:
+    servers:
+      - url: http://localhost:8083
+        description: Chỉ gọi trực tiếp — route `/media/medias/*` không khớp path gốc (ISSUE-15).
+    post:
+      operationId: uploadMedia
+      tags: [media]
+      summary: Upload file (multipart)
+      description: |
+        Field file: `multipartFile` hoặc `file`. Tên lưu = `fileNameOverride` (trim) || tên file gốc || `upload.bin`;
+        MIME = `file.type` || `application/octet-stream`. Ghi object `<uuid>-<tên đã làm sạch>` lên S3 **rồi** insert DB
+        (lỗi DB → object mồ côi — ISSUE-65f). Trả **200** thay vì 201 (ISSUE-65h).
+        Nguồn: `src/index.ts:42-57`, `src/service.ts:33-57`, `src/storage.ts:33-35`.
+      x-upstream-path: [/media/medias, /medias]
+      x-gateway-route: none — not exposed (route media không khớp path gốc, ISSUE-15)
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-15, ISSUE-32, ISSUE-65, ISSUE-93]
+      security: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                multipartFile: { type: string, format: binary, description: "Ưu tiên field này." }
+                file: { type: string, format: binary, description: "Dùng khi không có `multipartFile`." }
+                caption: { type: string, default: "" }
+                fileNameOverride: { type: string, default: "" }
+      responses:
+        "200":
+          description: Metadata (không có `url`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NoFileMediaVm" }
+        "400":
+          description: Thiếu file (hoặc body không phải multipart).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BunStatusError" }
+              example: { statusCode: "400", message: File is required }
+        "500": { $ref: "#/components/responses/InternalError" }
+    get:
+      operationId: getMediasByIds
+      tags: [media]
+      summary: Metadata nhiều media theo danh sách id
+      description: |
+        `ids` dạng CSV; phần tử không phải số bị bỏ. Không tìm thấy bản ghi nào (kể cả khi mọi id không hợp lệ) → **404**.
+        Nguồn: `src/index.ts:91-110`, `src/service.ts:86-99`.
+      x-upstream-path: [/media/medias, /medias]
+      x-gateway-route: none — not exposed (ISSUE-15)
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-15, ISSUE-63]
+      security: []
+      parameters:
+        - { name: ids, in: query, required: true, schema: { type: string, example: "1,2" } }
+      responses:
+        "200":
+          description: Mảng media.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/MediaVm" }
+        "400":
+          description: Thiếu `ids`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BunStatusError" }
+              example: { statusCode: "400", message: ids query param is required }
+        "404":
+          description: Không có media nào.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BunStatusError" }
+              example: { statusCode: "404", message: No medias found }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /media/medias/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer } }
+    get:
+      operationId: getMedia
+      tags: [media]
+      summary: Metadata một media
+      description: "Nguồn: `src/index.ts:74-88`, `src/service.ts:70-84`."
+      x-upstream-path: ["/media/medias/{id}", "/medias/{id}"]
+      x-gateway-route: media
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-01, ISSUE-63]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Media kèm `url`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MediaVm" }
+        "400": { $ref: "#/components/responses/InvalidId" }
+        "401": { $ref: "#/components/responses/GatewayUnauthorized" }
+        "404":
+          description: Không tồn tại.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BunStatusError" }
+              example: { statusCode: "404", message: Media not found }
+        "429": { $ref: "#/components/responses/GatewayRateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+    delete:
+      operationId: deleteMedia
+      tags: [media]
+      summary: Xóa media (object S3 + bản ghi DB)
+      description: |
+        Lỗi xóa object S3 chỉ log; id không tồn tại vẫn **204** (ISSUE-65d). Nguồn: `src/index.ts:60-71`, `src/service.ts:59-68`, `src/storage.ts:37-43`.
+      x-upstream-path: ["/media/medias/{id}", "/medias/{id}"]
+      x-gateway-route: media
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-01, ISSUE-65]
+      security:
+        - bearerAuth: []
+      responses:
+        "204": { description: Đã xóa (body rỗng). }
+        "400": { $ref: "#/components/responses/InvalidId" }
+        "401": { $ref: "#/components/responses/GatewayUnauthorized" }
+        "429": { $ref: "#/components/responses/GatewayRateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /media/medias/{id}/file/{fileName}:
+    get:
+      operationId: downloadMediaFile
+      tags: [media]
+      summary: Stream nội dung file
+      description: |
+        `fileName` (URL-decoded) phải khớp tên đã lưu (không phân biệt hoa thường); sai tên / không có object → 404.
+        Header `Content-Type` = MIME đã lưu, `Content-Disposition: attachment; filename="<fileName>"` (tên **không escape** — ISSUE-113).
+        Qua gateway cần Bearer → không nhúng `<img>` trực tiếp được (ISSUE-63).
+        Nguồn: `src/index.ts:113-130`, `src/service.ts:101-118`, `src/storage.ts:45-51`.
+      x-upstream-path: ["/media/medias/{id}/file/{fileName}", "/medias/{id}/file/{fileName}"]
+      x-gateway-route: media
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-63, ISSUE-113]
+      security:
+        - bearerAuth: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+        - { name: fileName, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Nội dung file (stream).
+          headers:
+            Content-Disposition:
+              schema: { type: string, example: 'attachment; filename="photo.png"' }
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+            image/*:
+              schema: { type: string, format: binary }
+        "400": { $ref: "#/components/responses/InvalidId" }
+        "401": { $ref: "#/components/responses/GatewayUnauthorized" }
+        "404":
+          description: Không có bản ghi, sai tên file hoặc object không tồn tại.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BunStatusError" }
+              example: { statusCode: "404", message: File not found }
+        "429": { $ref: "#/components/responses/GatewayRateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Access token Keycloak (realm `ecommerce`), verify bởi APISIX `openid-connect` (`bearer_only`, JWKS, RS256).
+        Không kiểm role (ISSUE-01); media-service không đọc token.
+  responses:
+    GatewayUnauthorized:
+      description: |
+        APISIX `openid-connect` từ chối (thiếu/sai/hết hạn token). Header `WWW-Authenticate: Bearer realm="ecommerce"`;
+        body do APISIX/OpenResty sinh.
+    GatewayRateLimited:
+      description: 'APISIX `limit-count` (1200 req/60 s theo `remote_addr`) — body mặc định APISIX (ISSUE-61).'
+    InvalidId:
+      description: '`id` không phải số.'
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/BunStatusError" }
+          example: { statusCode: "400", message: Invalid ID }
+    InternalError:
+      description: Exception (lỗi S3/DB…); `message` = `err.message` nguyên văn (ISSUE-93).
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/BunStatusError" }
+  schemas:
+    Health:
+      type: object
+      properties:
+        status: { type: string, const: UP }
+        components:
+          type: object
+          properties:
+            db:
+              type: object
+              properties:
+                status: { type: string, const: UP }
+            storage:
+              type: object
+              properties:
+                status: { type: string, const: UP }
+    BunStatusError:
+      type: object
+      required: [statusCode, message]
+      properties:
+        statusCode: { type: string, examples: ["400", "404", "500"] }
+        message: { type: string }
+    NoFileMediaVm:
+      type: object
+      description: "`src/service.ts:14-19`."
+      properties:
+        id: { type: integer }
+        caption: { type: string }
+        fileName: { type: string }
+        mediaType: { type: string }
+    MediaVm:
+      type: object
+      description: "`src/service.ts:6-12`."
+      properties:
+        id: { type: integer }
+        caption: { type: string }
+        fileName: { type: string }
+        mediaType: { type: string }
+        url:
+          type: string
+          description: '`${PUBLIC_URL}/medias/{id}/file/{encodeURIComponent(fileName)}` — thiếu prefix `/media`, trỏ thẳng port service (ISSUE-63).'
+          example: http://localhost:8083/medias/1/file/photo.png

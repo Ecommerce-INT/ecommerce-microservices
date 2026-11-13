@@ -1,0 +1,175 @@
+openapi: 3.1.0
+info:
+  title: inventory-service API
+  version: "1.0.0"
+  description: |
+    Đặc tả OpenAPI **as-is** của `inventory-service` (Go, chi, port `8082`) — API **chỉ đọc** kiểm tra còn hàng theo
+    **tên sản phẩm** (không theo `productId` — ISSUE-26). Mô tả đúng hành vi code hiện tại, không phải thiết kế đích.
+
+    - Tài liệu service: [../../03-services/inventory-service.md](../../03-services/inventory-service.md)
+    - Định tuyến gateway: [../gateway-routing.md](../gateway-routing.md) · Danh mục API: [../api-catalog.md](../api-catalog.md)
+
+    **Quy ước trong spec này**
+    - Path ghi theo **path tại gateway APISIX**; `x-upstream-path` là path sau `proxy-rewrite` (`^/(.*)` → `/inventory/$1`).
+      Service đăng ký `/inventory/api/inventory` và `/api/inventory` (`services/inventory-service/internal/handler/inventory_handler.go:25-27`).
+    - Thành công: **JSON thô**; lỗi: `ErrorVm {statusCode, title, detail}` (chỉ 500) — ISSUE-29, ISSUE-93.
+    - Route `inventory` Bearer — chỉ xác thực, không kiểm role (ISSUE-01).
+    - Không có endpoint nhập/xuất/giữ hàng (ISSUE-26). DB không kết nối → mọi tên đều `isInStock: false` (ISSUE-28).
+    - Mọi route chịu `limit-count` global của APISIX (429 — ISSUE-61).
+  x-source:
+    - services/inventory-service/internal/handler/inventory_handler.go
+    - services/inventory-service/internal/model/inventory.go
+    - services/inventory-service/internal/service/inventory_service.go
+    - services/inventory-service/internal/repository/inventory_repo.go
+    - deploy/apisix/apisix.yaml
+servers:
+  - url: http://localhost:9080
+    description: APISIX gateway (docker compose local). Path trong spec là path tại gateway.
+  - url: http://localhost:8082
+    description: Gọi trực tiếp inventory-service (port publish ra host, không kiểm token — ISSUE-02). Path gateway vẫn hợp lệ.
+tags:
+  - name: inventory
+    description: Kiểm tra tồn kho (route `inventory`, Bearer).
+  - name: health
+    description: Health check tĩnh, không có route gateway.
+
+paths:
+  /actuator/health:
+    servers:
+      - url: http://localhost:8082
+        description: Chỉ gọi trực tiếp — không có route gateway.
+    get:
+      operationId: inventoryHealth
+      tags: [health]
+      summary: Health check (luôn UP)
+      description: 'Payload tĩnh `{"status":"UP","components":{"db":{"status":"UP"}}}` (ISSUE-36). Alias: `/inventory/actuator/health`.'
+      x-upstream-path: [/actuator/health, /inventory/actuator/health]
+      x-gateway-route: none — not exposed
+      x-known-issues: [ISSUE-36]
+      security: []
+      responses:
+        "200":
+          description: Luôn UP.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Health" }
+
+  /api/inventory:
+    get:
+      operationId: checkStockByQuery
+      tags: [inventory]
+      summary: Kiểm còn hàng theo danh sách tên (query)
+      description: |
+        Hỗ trợ cả `?productName=a&productName=b` lẫn `?productName=a,b`; mỗi giá trị tách theo `,`, `TrimSpace`, bỏ phần tử rỗng
+        (`inventory_handler.go:39-51`). So khớp **chính xác, phân biệt hoa thường** với `inventory.product_name`.
+        Tham số `skuCode` (frontend gửi) **bị bỏ qua** (ISSUE-51). Không truyền tên nào → `[]`.
+        Kết quả cùng thứ tự input; `isInStock = tồn tại && quantity > 0`. Tên trùng trong DB → bản ghi cuối thắng.
+        Nguồn: `inventory_handler.go:53-63`, `internal/service/inventory_service.go:18-40`.
+      x-upstream-path: /inventory/api/inventory
+      x-gateway-route: inventory
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-26, ISSUE-51, ISSUE-01]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: productName
+          in: query
+          required: false
+          style: form
+          explode: true
+          description: Lặp lại hoặc phân tách bằng dấu phẩy.
+          schema:
+            type: array
+            items: { type: string }
+          example: ["iPhone 15", "MacBook"]
+      responses:
+        "200":
+          description: Mảng kết quả, cùng thứ tự với input.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/InventoryResponse" }
+              example:
+                - { productName: "iPhone 15", isInStock: true, quantity: 50 }
+                - { productName: "MacBook", isInStock: false }
+        "401": { $ref: "#/components/responses/GatewayUnauthorized" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /api/inventory/{products}:
+    parameters:
+      - name: products
+        in: path
+        required: true
+        description: 'Danh sách tên phân tách bằng dấu phẩy, vd `iPhone,iPad` (URL-encode khoảng trắng).'
+        schema: { type: string }
+        example: "iPhone 15,MacBook"
+    get:
+      operationId: checkStockByPath
+      tags: [inventory]
+      summary: Kiểm còn hàng theo danh sách tên trên path
+      description: 'Như GET /api/inventory nhưng danh sách tên trên path. Nguồn: `inventory_handler.go:65-74`.'
+      x-upstream-path: /inventory/api/inventory/{products}
+      x-gateway-route: inventory
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-26, ISSUE-01]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Mảng kết quả, cùng thứ tự với input.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/InventoryResponse" }
+        "401": { $ref: "#/components/responses/GatewayUnauthorized" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Access token Keycloak (realm `ecommerce`), verify bởi APISIX `openid-connect` (`bearer_only`, JWKS, RS256).
+        Không kiểm role (ISSUE-01); service không tự verify (ISSUE-02).
+  responses:
+    GatewayUnauthorized:
+      description: APISIX `openid-connect` từ chối (thiếu/sai/hết hạn token). Body do APISIX sinh, không phải `ErrorVm`.
+    InternalError:
+      description: Lỗi DB; `detail` = thông điệp lỗi nguyên văn (ISSUE-93).
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorVm" }
+  schemas:
+    Health:
+      type: object
+      properties:
+        status: { type: string, const: UP }
+        components:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              status: { type: string, const: UP }
+      example: { status: UP, components: { db: { status: UP } } }
+    ErrorVm:
+      type: object
+      description: '`response.ErrorVm` (`services/shared/response/response.go:6-10`). Service này chỉ trả 500.'
+      required: [statusCode, title, detail]
+      properties:
+        statusCode: { type: string, enum: ["500"] }
+        title: { type: string, enum: [Internal server error] }
+        detail: { type: string }
+    InventoryResponse:
+      type: object
+      description: '`model.InventoryResponse` (`internal/model/inventory.go:9-13`).'
+      required: [productName, isInStock]
+      properties:
+        productName: { type: string }
+        isInStock: { type: boolean }
+        quantity:
+          type: integer
+          description: '`omitempty` → bị ẩn khi bằng 0 (hết hàng hoặc không có bản ghi). Có thể âm (không ràng buộc).'

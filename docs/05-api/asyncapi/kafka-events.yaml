@@ -1,0 +1,355 @@
+asyncapi: 3.0.0
+info:
+  title: Ecommerce Kafka events (as-is)
+  version: "1.0.0"
+  description: |
+    Đặc tả AsyncAPI **as-is** của mọi topic Kafka được code tham chiếu. Mô tả đúng hành vi hiện tại — kể cả các điểm lệch:
+    **không có luồng sự kiện nào chạy đầu-cuối** (producer và consumer không dùng chung topic nào — ISSUE-17, ISSUE-19).
+
+    - Danh mục sự kiện dạng đọc: [../event-catalog.md](../event-catalog.md)
+    - Kiến trúc tích hợp: [../../02-architecture/system/integration-messaging.md](../../02-architecture/system/integration-messaging.md)
+    - Issue: [../../07-plan/known-issues-tech-debt.md](../../07-plan/known-issues-tech-debt.md)
+
+    **Đặc điểm chung**
+    - Payload JSON thuần (UTF-8) trong `value`; **không** key, **không** header (không correlation id — ISSUE-98),
+      **không** schema registry, không version schema.
+    - Producer duy nhất trong repo: payment-service (`segmentio/kafka-go`). Consumer: notification-service (`kafkajs`),
+      search-service (`segmentio/kafka-go`).
+    - Topic không được tạo khi deploy; broker để mặc định `auto.create.topics.enable` (bật) nhưng `kafka.Writer` của
+      payment-service không bật `AllowAutoTopicCreation` (ISSUE-57).
+    - Giao nhận: producer fire-and-forget (lỗi bị nuốt — ISSUE-18), consumer at-most-once trong thực tế (lỗi xử lý chỉ log,
+      offset vẫn commit — ISSUE-80), không idempotency, không DLQ.
+  x-source:
+    - services/payment-service/internal/service/payment_service.go
+    - services/payment-service/internal/service/kafka_producer.go
+    - services/payment-service/internal/model/payment.go
+    - services/payment-service/main.go
+    - services/notification-service/src/kafka.ts
+    - services/notification-service/src/schema.ts
+    - services/search-service/internal/consumer/product_sync_consumer.go
+    - services/search-service/internal/model/search.go
+    - services/search-service/main.go
+    - docker-compose.yml
+defaultContentType: application/json
+
+servers:
+  compose:
+    host: kafka:9092
+    protocol: kafka
+    protocolVersion: "3.9.0"
+    description: |
+      Broker `apache/kafka:3.9.0` KRaft 1 node (broker + controller), listener `PLAINTEXT://:9092`, quảng bá
+      `PLAINTEXT://kafka:9092`, replication factor 1 (`docker-compose.yml:41-67`). Service trong compose dùng
+      `KAFKA_SERVERS=kafka:9092` (`docker-compose.yml:229,251,374,398`).
+  host-dev:
+    host: localhost:9092
+    protocol: kafka
+    protocolVersion: "3.9.0"
+    description: |
+      Port publish ra host (`docker-compose.yml:44-45`) — mặc định của `KAFKA_SERVERS` trong code. Broker quảng bá `kafka:9092`
+      nên client chạy trên host không kết nối được sau bước metadata (ISSUE-97).
+
+channels:
+  successful:
+    address: SUCCESSFUL
+    title: SUCCESSFUL
+    summary: Sự kiện "thanh toán thành công" — publish sau MỌI lần tạo payment.
+    description: |
+      Hằng `TopicPaymentSuccessful` (`services/payment-service/internal/service/payment_service.go:19`).
+      **Không có consumer** trong repo (ISSUE-17).
+    messages:
+      paymentEvent:
+        $ref: "#/components/messages/KafkaPaymentDto"
+    bindings:
+      kafka:
+        topic: SUCCESSFUL
+        bindingVersion: "0.5.0"
+    x-producers: [payment-service]
+    x-consumers: []
+    x-status: orphan-produce
+    x-known-issues: [ISSUE-17, ISSUE-18, ISSUE-57, ISSUE-80]
+
+  paymentCompleted:
+    address: paymentCompleted
+    title: paymentCompleted
+    summary: Bản sao của sự kiện `SUCCESSFUL` (cùng payload, gửi ngay sau).
+    description: |
+      Hằng `TopicPaymentCompleted` (`payment_service.go:20`). **Không có consumer** trong repo (ISSUE-17).
+    messages:
+      paymentEvent:
+        $ref: "#/components/messages/KafkaPaymentDto"
+    bindings:
+      kafka:
+        topic: paymentCompleted
+        bindingVersion: "0.5.0"
+    x-producers: [payment-service]
+    x-consumers: []
+    x-status: orphan-produce
+    x-known-issues: [ISSUE-17, ISSUE-18, ISSUE-57]
+
+  statusPaymentSuccessful:
+    address: status-payment-successful
+    title: status-payment-successful
+    summary: Sự kiện thanh toán mà notification-service chờ — không ai produce.
+    description: |
+      Subscribe tại `services/notification-service/src/kafka.ts:23`. Tên topic **không khớp** với topic payment-service
+      publish (`SUCCESSFUL`, `paymentCompleted`) → handler không bao giờ chạy (ISSUE-17).
+    messages:
+      paymentStatusEvent:
+        $ref: "#/components/messages/PaymentStatusEvent"
+    bindings:
+      kafka:
+        topic: status-payment-successful
+        bindingVersion: "0.5.0"
+    x-producers: []
+    x-consumers: [notification-service]
+    x-status: orphan-consume
+    x-known-issues: [ISSUE-17, ISSUE-09, ISSUE-80, ISSUE-112]
+
+  profileOnboarding:
+    address: profile-onboarding-topic
+    title: profile-onboarding-topic
+    summary: Sự kiện onboarding người dùng (gửi email chào mừng) — không ai produce.
+    description: |
+      Subscribe tại `services/notification-service/src/kafka.ts:23`. auth-service không publish Kafka (ISSUE-17).
+    messages:
+      profileOnboardingEvent:
+        $ref: "#/components/messages/ProfileOnboardingEvent"
+    bindings:
+      kafka:
+        topic: profile-onboarding-topic
+        bindingVersion: "0.5.0"
+    x-producers: []
+    x-consumers: [notification-service]
+    x-status: orphan-consume
+    x-known-issues: [ISSUE-17, ISSUE-80]
+
+  productChange:
+    address: dbproduct.public.product
+    title: dbproduct.public.product
+    summary: Change event kiểu Debezium của bảng product — dự kiến từ Debezium, không có trong repo.
+    description: |
+      Tên topic cấu hình bằng `PRODUCT_TOPIC_NAME` (mặc định `dbproduct.public.product`, `services/search-service/main.go:32`).
+      Không có Debezium connector/Kafka Connect trong compose/repo; bảng thật là `products(product_id, product_title,
+      price_unit…)` không khớp field `id/name/slug/price` mà consumer đọc (ISSUE-19).
+    messages:
+      productChangeEvent:
+        $ref: "#/components/messages/DebeziumProductChange"
+    bindings:
+      kafka:
+        topic: dbproduct.public.product
+        bindingVersion: "0.5.0"
+    x-producers: []
+    x-consumers: [search-service]
+    x-status: orphan-consume
+    x-known-issues: [ISSUE-19, ISSUE-114]
+
+operations:
+  paymentService.publishSuccessful:
+    action: send
+    channel:
+      $ref: "#/channels/successful"
+    title: payment-service gửi SUCCESSFUL
+    summary: Gửi sau khi `POST /api/payments` lưu thành công, bất kể `paymentStatus` (COD cũng gửi — ISSUE-18).
+    description: |
+      `PaymentService.Save` → `json.Marshal(KafkaPaymentDto)` → `producer.Send(ctx, "SUCCESSFUL", …)`; lỗi bị bỏ qua (`_ =`)
+      (`payment_service.go:103-113`). Writer: `Balancer: LeastBytes`, `RequiredAcks: RequireOne`, `WriteTimeout: 3s`,
+      gửi đồng bộ trong request (BatchTimeout mặc định 1 s — ISSUE-57) (`kafka_producer.go:15-49`).
+      `KAFKA_SERVERS` rỗng → writer `nil`, chỉ log và bỏ qua.
+    messages:
+      - $ref: "#/channels/successful/messages/paymentEvent"
+    bindings:
+      kafka:
+        clientId: { type: string, description: "Mặc định của kafka-go (không cấu hình)." }
+        bindingVersion: "0.5.0"
+    x-known-issues: [ISSUE-18, ISSUE-57, ISSUE-75]
+
+  paymentService.publishPaymentCompleted:
+    action: send
+    channel:
+      $ref: "#/channels/paymentCompleted"
+    title: payment-service gửi paymentCompleted
+    summary: Gửi ngay sau `SUCCESSFUL`, cùng payload (`payment_service.go:112`).
+    messages:
+      - $ref: "#/channels/paymentCompleted/messages/paymentEvent"
+    bindings:
+      kafka:
+        bindingVersion: "0.5.0"
+    x-known-issues: [ISSUE-18, ISSUE-57]
+
+  notificationService.consumePaymentStatus:
+    action: receive
+    channel:
+      $ref: "#/channels/statusPaymentSuccessful"
+    title: notification-service nhận status-payment-successful
+    summary: Insert `payment_notifications` rồi gửi email tới địa chỉ hard-code (ISSUE-09).
+    description: |
+      `consumer.run({eachMessage})` (`kafka.ts:27-61`): `JSON.parse` → insert với default `isPayed ?? true`,
+      `paymentStatus || "SUCCESS"`, `amount || 0` (ISSUE-112) → `sendEmail` tới địa chỉ cá nhân cố định (ISSUE-09).
+      Mọi lỗi chỉ `console.error`, offset vẫn commit (autoCommit mặc định kafkajs) → mất sự kiện (ISSUE-80).
+      `fromBeginning: false`; kết nối lúc khởi động `retries: 2`, thất bại → chạy tiếp không Kafka, không reconnect (ISSUE-65b).
+    messages:
+      - $ref: "#/channels/statusPaymentSuccessful/messages/paymentStatusEvent"
+    bindings:
+      kafka:
+        groupId:
+          type: string
+          enum: [notification-group]
+          description: "`PAYMENT_KAFKA_CONSUMER_GROUP_ID` || `notification-group` (`kafka.ts:8`); compose không set."
+        clientId:
+          type: string
+          enum: [notification-service]
+        bindingVersion: "0.5.0"
+    x-known-issues: [ISSUE-17, ISSUE-09, ISSUE-80, ISSUE-65, ISSUE-112]
+
+  notificationService.consumeProfileOnboarding:
+    action: receive
+    channel:
+      $ref: "#/channels/profileOnboarding"
+    title: notification-service nhận profile-onboarding-topic
+    summary: Gửi email chào mừng.
+    description: |
+      `recipient || email || "customer@ecommerce.local"`, `subject || "Welcome to Ecommerce!"`,
+      `msgBody || "Thank you for onboarding!"` (`kafka.ts:33-39`). Cùng consumer group với topic thanh toán.
+    messages:
+      - $ref: "#/channels/profileOnboarding/messages/profileOnboardingEvent"
+    bindings:
+      kafka:
+        groupId:
+          type: string
+          enum: [notification-group]
+        clientId:
+          type: string
+          enum: [notification-service]
+        bindingVersion: "0.5.0"
+    x-known-issues: [ISSUE-17, ISSUE-80]
+
+  searchService.consumeProductChange:
+    action: receive
+    channel:
+      $ref: "#/channels/productChange"
+    title: search-service đồng bộ index OpenSearch `product`
+    summary: "`op = d` → xóa document theo `before.id`; còn lại → index document từ `after`."
+    description: |
+      Goroutine nền (`product_sync_consumer.go:30-87`): `kafka.NewReader{GroupID: "search-group", MinBytes: 10e3,
+      MaxBytes: 10e6}`; `ReadMessage` tự commit offset. Lỗi đọc → sleep 2 s, lặp lại; JSON lỗi → bỏ qua; lỗi
+      index/xóa bị bỏ (`_ =`). Upsert ghi đè **toàn bộ** document: chỉ `id/name/slug/price` + `createdOn = now`,
+      các field khác về zero value (`isPublished=false`…). Đọc `op`/`before`/`after` ở **gốc** message — chỉ khớp
+      Debezium khi tắt schema envelope (`schemas.enable=false`) hoặc dùng SMT unwrap; `price` NUMERIC mặc định
+      được Debezium mã hóa base64 → ép `float64` thất bại → 0 (ISSUE-114).
+    messages:
+      - $ref: "#/channels/productChange/messages/productChangeEvent"
+    bindings:
+      kafka:
+        groupId:
+          type: string
+          enum: [search-group]
+          description: Hard-code tại `services/search-service/main.go:59`.
+        bindingVersion: "0.5.0"
+    x-known-issues: [ISSUE-19, ISSUE-114, ISSUE-34]
+
+components:
+  messages:
+    KafkaPaymentDto:
+      name: KafkaPaymentDto
+      title: Payment event (payment-service)
+      summary: Struct `model.KafkaPaymentDto` (`services/payment-service/internal/model/payment.go:28-34`).
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/KafkaPaymentDto"
+      bindings:
+        kafka:
+          key:
+            type: "null"
+            description: Không set key → partition do `LeastBytes` chọn, không đảm bảo thứ tự theo đơn.
+          bindingVersion: "0.5.0"
+      examples:
+        - name: online
+          summary: "Checkout ONLINE (BFF gửi `isPayed: true`, `IN_PROGRESS` — ISSUE-75); `userId` vắng vì BFF không gửi (ISSUE-76)."
+          payload: { paymentId: 12, isPayed: true, paymentStatus: IN_PROGRESS, orderId: 34 }
+        - name: cod
+          summary: Checkout COD — vẫn phát sự kiện "thành công" (ISSUE-18).
+          payload: { paymentId: 13, isPayed: false, paymentStatus: NOT_STARTED, orderId: 35 }
+    PaymentStatusEvent:
+      name: PaymentStatusEvent
+      title: Payment status event (notification-service mong đợi)
+      summary: Hình dạng suy ra từ field `kafka.ts:41-55` đọc. Không có type khai báo.
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/PaymentStatusEvent"
+      examples:
+        - name: expected
+          payload: { paymentId: 12, userId: "42", orderId: 34, amount: 250000, isPayed: true, paymentStatus: COMPLETED }
+    ProfileOnboardingEvent:
+      name: ProfileOnboardingEvent
+      title: Profile onboarding event
+      summary: Hình dạng suy ra từ `kafka.ts:34-39`.
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/ProfileOnboardingEvent"
+      examples:
+        - name: expected
+          payload: { recipient: new.user@example.com, subject: Chào mừng, msgBody: Cảm ơn bạn đã đăng ký }
+    DebeziumProductChange:
+      name: DebeziumProductChange
+      title: Debezium-style product change event
+      summary: Hình dạng suy ra từ `product_sync_consumer.go:54-83` (đọc `map[string]any`).
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/DebeziumProductChange"
+      examples:
+        - name: upsert
+          payload: { op: u, before: { id: 5 }, after: { id: 5, name: Áo thun, slug: ao-thun, price: 199000 } }
+        - name: delete
+          payload: { op: d, before: { id: 5 }, after: null }
+
+  schemas:
+    KafkaPaymentDto:
+      type: object
+      description: |
+        Mọi field có `omitempty` → field `nil`/chuỗi rỗng bị **bỏ khỏi JSON** (vd `paymentStatus` rỗng — ISSUE-59).
+        **Không có `amount`** (ISSUE-80). `userId` là số (`*int64`), trong khi notification lưu `user_id` VARCHAR và
+        Keycloak `sub` là UUID (ISSUE-49).
+      properties:
+        paymentId: { type: integer, format: int32 }
+        isPayed: { type: boolean }
+        paymentStatus: { type: string, examples: [NOT_STARTED, IN_PROGRESS, COMPLETED] }
+        orderId: { type: integer, format: int32 }
+        userId: { type: integer, format: int64 }
+    PaymentStatusEvent:
+      type: object
+      description: |
+        Field notification-service đọc; field thiếu nhận default khi insert: `paymentId/userId/orderId` → NULL,
+        `amount` → 0, `isPayed` → `true`, `paymentStatus` → `SUCCESS` (ISSUE-112).
+      properties:
+        paymentId: { type: integer }
+        userId: { type: [string, integer], description: "Ghi vào `user_id VARCHAR(255)`." }
+        orderId: { type: integer }
+        amount: { type: number, description: "payment-service không gửi field này (ISSUE-80)." }
+        isPayed: { type: boolean, default: true }
+        paymentStatus: { type: string, default: SUCCESS }
+    ProfileOnboardingEvent:
+      type: object
+      properties:
+        recipient: { type: string, description: "Ưu tiên; fallback `email`, rồi `customer@ecommerce.local`." }
+        email: { type: string }
+        subject: { type: string, default: "Welcome to Ecommerce!" }
+        msgBody: { type: string, default: "Thank you for onboarding!" }
+    DebeziumProductChange:
+      type: object
+      description: |
+        Chỉ các field dưới đây được đọc; `id` và `price` phải là JSON number (ép `float64`), sai kiểu → 0.
+        Tombstone (value null) → `json.Unmarshal` lỗi → bỏ qua.
+      properties:
+        op: { type: string, enum: [c, u, r, d], description: "`d` → xóa; mọi giá trị khác có `after` → index." }
+        before:
+          type: [object, "null"]
+          properties:
+            id: { type: number }
+        after:
+          type: [object, "null"]
+          properties:
+            id: { type: number }
+            name: { type: string }
+            slug: { type: string }
+            price: { type: number }
