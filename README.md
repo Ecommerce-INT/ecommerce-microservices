@@ -116,14 +116,13 @@ Toàn bộ tài liệu chính thức của nền tảng được tổ chức chi
 - 🧭 [**Tài liệu tổng quan hệ thống (As-Is)**](docs/README.md) — Điểm vào chính, ma trận dịch vụ, danh mục tính năng.
 - 📋 [**Yêu cầu nghiệp vụ (BRD & Processes)**](docs/01-brd/brd.md) — 28 yêu cầu nghiệp vụ, luồng quy trình, phân quyền actor.
 - 🏗️ [**Kiến trúc hệ thống (Arc42 & C4)**](docs/02-architecture/README.md) — System Context, Container View, Runtime Flows, ADRs.
-- 🎯 [**Kiến trúc đích (Target Revamp)**](docs/02-architecture/target-revamp/README.md) — Định hướng nâng cấp dài hạn (Better-Auth, NATS JetStream, PG18).
 - 📦 [**Tài liệu chi tiết 11 Microservices**](docs/03-services/) — Cấu trúc, DB schema, biến môi trường từng service.
 - 🔌 [**API & Event Catalog**](docs/05-api/api-catalog.md) — Đặc tả API, APISIX gateway routing, OpenAPI 3.1 & AsyncAPI 3.0.
 - 📊 [**Từ điển dữ liệu (Data Dictionary)**](docs/06-data/data-dictionary.md) — Cấu trúc chi tiết mọi bảng và cột PostgreSQL.
 - ⚠️ [**Danh sách lỗi & Nợ kỹ thuật (107 issues)**](docs/07-plan/known-issues-tech-debt.md) — Audit hiện trạng từ source code.
 - 🗺️ [**Lộ trình hoàn thiện (P0 → P5)**](docs/07-plan/project-plan.md) & [**Test Plan**](docs/07-plan/test-plan.md) — Kế hoạch xử lý lỗi hợp đồng FE↔BE, bảo mật và nghiệp vụ.
 - 💻 [**Developer Guide & Quy ước code**](docs/08-guides/developer-guide.md) — Hướng dẫn setup local, debug, cấu hình môi trường.
-- 🌐 [**Frontend Documentation**](docs/web/README.md) — Tài liệu và backlog chuyển đổi SvelteKit 3 monorepo.
+- 🌐 [**Frontend Architecture & Apps**](docs/02-architecture/software/frontend-architecture.md) — Kiến trúc SvelteKit BFF, [Storefront Web](docs/03-services/frontend-web.md) & [Backoffice Admin](docs/03-services/frontend-admin.md).
 
 ## License
 

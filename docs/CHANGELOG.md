@@ -12,7 +12,7 @@ Tài liệu này ghi nhận toàn bộ các mốc phát hành và cập nhật c
 - **Kiến trúc (Arc42 & C4):** Bổ sung C4 Level 3 (`component-view.md`), quality scenarios (`quality-scenarios.md`), threat model STRIDE (`threat-model.md`), chính sách dữ liệu cá nhân Nghị định 13/2023 (`data-privacy-pii.md`).
 - **Đặc tả API & Sự kiện:** Khởi tạo bộ OpenAPI 3.1 YAML cho 11 microservices và AsyncAPI 3.0 YAML cho Kafka events; bổ sung error catalog và event catalog.
 - **Kế hoạch & Đánh giá hiện trạng:** Hoàn thiện audit source code với 107 open issues (`known-issues-tech-debt.md`), lộ trình 6 giai đoạn P0 → P5 (`project-plan.md`), sprint backlog và test plan chi tiết.
-- **Tổ chức thư mục:** Hợp nhất bộ tài liệu vào thư mục chính thức `docs/` của dự án; lưu trữ các đề xuất kiến trúc đích dài hạn vào `02-architecture/target-revamp/`.
+- **Tổ chức thư mục:** Đồng bộ và chuẩn hóa bộ tài liệu vào thư mục chính thức `docs/` của dự án; loại bỏ các tài liệu cũ không còn phù hợp.
 
 ---
 

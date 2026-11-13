@@ -2,7 +2,7 @@
 
 > **Phiên bản:** 1.0 · **Trạng thái:** Final · **Cập nhật:** 2026-11-12 · **Phạm vi:** Ứng dụng (as-is)
 
-> Kế hoạch được xây dựng **từ khoảng trống của code hiện tại** ([known-issues-tech-debt.md](known-issues-tech-debt.md), trạng thái FEAT trong [04-features](../04-features/README.md)). Không dựa trên kiến trúc đích trong `docs/ARCHITECTURE.md`. Các giai đoạn được định nghĩa bằng **tiêu chí hoàn thành**; ước lượng kích thước dùng thang tương đối S (≤ 2 ngày), M (≤ 1 tuần), L (> 1 tuần) cho 1 dev.
+> Kế hoạch được xây dựng **từ khoảng trống của code hiện tại** ([known-issues-tech-debt.md](known-issues-tech-debt.md), trạng thái FEAT trong [04-features](../04-features/README.md)). Không dựa trên các đề xuất kiến trúc chưa được triển khai. Các giai đoạn được định nghĩa bằng **tiêu chí hoàn thành**; ước lượng kích thước dùng thang tương đối S (≤ 2 ngày), M (≤ 1 tuần), L (> 1 tuần) cho 1 dev.
 >
 > Phạm vi: ứng dụng. Việc hạ tầng (k8s, CI/CD, secret management, observability) lập kế hoạch riêng.
 

@@ -4,7 +4,7 @@
 
 > **Phạm vi:** toàn bộ phần **ứng dụng** (11 backend service + 2 frontend SvelteKit + package dùng chung). Tài liệu hạ tầng (Kubernetes, CI/CD, GitOps, observability) sẽ được bổ sung ở bộ riêng.
 >
-> **Nguyên tắc cốt lõi:** mọi nội dung mô tả **đúng code hiện tại (as-is)**. Chức năng còn thiếu hoặc có lỗi được ghi trung thực kèm mã `ISSUE-xx`. Các tài liệu cũ trong `docs/` (`ARCHITECTURE.md`, `architecture-revamp-plan.md`) mô tả **kiến trúc đích khác** và **không** phải nguồn của bộ tài liệu này.
+> **Nguyên tắc cốt lõi:** mọi nội dung mô tả **đúng code hiện tại (as-is)**. Chức năng còn thiếu hoặc có lỗi được ghi trung thực kèm mã `ISSUE-xx`.
 >
 > **Cập nhật:** 2026-11-12 · **Ngôn ngữ:** Tiếng Việt · **Sơ đồ:** Mermaid
 
@@ -26,21 +26,19 @@
 ```
 docs/
 ├── README.md                 ← Cổng tra cứu tài liệu chính (tài liệu này)
-├── ARCHITECTURE.md           ← Điều hướng kiến trúc: Hiện tại (As-Is) vs Đích (Target)
+├── CHANGELOG.md              ← Lịch sử phiên bản tài liệu
 ├── 00-overview/              Tổng quan, thuật ngữ, quy ước & sổ đăng ký ID
 ├── 01-brd/                   Business Requirements Document & Quy trình nghiệp vụ
 ├── 02-architecture/          Kiến trúc hệ thống & phần mềm (arc42, C4, ADRs)
 │   ├── system/               System Context, Container, Component, Runtime, Security, Data
 │   ├── software/             Kiến trúc Go, Bun/Hono, Frontend BFF, API conventions
-│   ├── adr/                  Architecture Decision Records (ADR-001 … ADR-008)
-│   └── target-revamp/        Kiến trúc đích tương lai (ARCHITECTURE.md, revamp plan)
+│   └── adr/                  Architecture Decision Records (ADR-001 … ADR-008)
 ├── 03-services/              Mỗi service / app một tài liệu chi tiết (11 backend + 2 frontend)
 ├── 04-features/              Mỗi tính năng một tài liệu (FEAT-01 … FEAT-28 + screen catalog)
 ├── 05-api/                   API catalog, Gateway routing, OpenAPI specs, AsyncAPI spec
 ├── 06-data/                  Data dictionary toàn hệ thống & Data privacy PII
 ├── 07-plan/                  Known issues (107 issues), Project plan (P0-P5), Backlog, Test plan
-├── 08-guides/                Developer guide, Coding conventions, Rollout guides
-└── web/                      Tài liệu & tasklist quá trình rewrite SvelteKit frontend
+└── 08-guides/                Developer guide, Coding conventions, Configuration reference
 ```
 
 ## 3. Tổng quan & BRD
@@ -79,7 +77,6 @@ docs/
 | [api-conventions.md](02-architecture/software/api-conventions.md) | Quy ước URL, response, phân trang, lỗi |
 | [cross-cutting-concerns.md](02-architecture/software/cross-cutting-concerns.md) | Cấu hình, logging, lỗi, CORS, validation, test |
 | [adr/README.md](02-architecture/adr/README.md) | Các quyết định kiến trúc (ADR-001 … ADR-008) |
-| [target-revamp/](02-architecture/target-revamp/README.md) | 🎯 **Kiến trúc đích & Đề xuất tái cấu trúc** (NATS JetStream, Better-Auth, PG 18) |
 
 ## 5. Service
 
@@ -126,8 +123,6 @@ Danh mục đầy đủ, trạng thái và ma trận truy vết: **[04-features/
 | [07-plan/test-plan.md](07-plan/test-plan.md) | Hiện trạng & kế hoạch kiểm thử |
 | [08-guides/developer-guide.md](08-guides/developer-guide.md) | Chạy local, thêm endpoint/route, troubleshooting |
 | [08-guides/coding-conventions.md](08-guides/coding-conventions.md) | Quy ước code Go / Bun / SvelteKit |
-| [08-guides/keycloak-postgres-rollout.md](08-guides/keycloak-postgres-rollout.md) | Hướng dẫn cấu hình môi trường Keycloak & PostgreSQL |
-| [web/README.md](web/README.md) | Ghi chú & backlog quá trình chuyển đổi SvelteKit 3 |
 
 ## 8. Bảo trì tài liệu
 

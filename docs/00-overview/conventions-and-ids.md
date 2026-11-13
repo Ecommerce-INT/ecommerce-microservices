@@ -8,7 +8,7 @@
 
 | # | Nguyên tắc |
 | :--- | :--- |
-| P-1 | **Mô tả đúng code hiện tại (as-is).** Source code là nguồn sự thật. Không mô tả kiến trúc đích trong `docs/ARCHITECTURE.md` / `docs/architecture-revamp-plan.md`. |
+| P-1 | **Mô tả đúng code hiện tại (as-is).** Source code là nguồn sự thật. Không mô tả kiến trúc đích hay các đề xuất chưa được triển khai. |
 | P-2 | Viết **tiếng Việt**, giữ nguyên thuật ngữ kỹ thuật tiếng Anh (endpoint, handler, repository, cookie, token…). |
 | P-3 | Sơ đồ dùng **Mermaid** trong block ` ```mermaid `. |
 | P-4 | Mỗi khẳng định quan trọng có tham chiếu source dạng `` `path/to/file.go:123` `` (đường dẫn tính từ gốc repo). |
