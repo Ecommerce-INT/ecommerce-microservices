@@ -1,0 +1,430 @@
+openapi: 3.1.0
+info:
+  title: notification-service API
+  version: "1.0.0"
+  description: |
+    Đặc tả OpenAPI **as-is** của `notification-service` (Bun + Hono + Drizzle + nodemailer + kafkajs, port `8090`) —
+    gửi email, CRUD thông báo và thông báo thanh toán. Phần Kafka consumer: xem [../asyncapi/kafka-events.yaml](../asyncapi/kafka-events.yaml).
+
+    - Tài liệu service: [../../03-services/notification-service.md](../../03-services/notification-service.md)
+    - Định tuyến gateway: [../gateway-routing.md](../gateway-routing.md) · Danh mục API: [../api-catalog.md](../api-catalog.md)
+    - Danh mục lỗi: [../error-catalog.md](../error-catalog.md)
+
+    **Quy ước trong spec này**
+    - Path ghi theo **path tại gateway APISIX**. Ba route `notif-email`, `notif-notifications`, `notif-payment` chỉ có dạng
+      `/notification/api/<x>/*` (không rewrite, có `openid-connect`) → path gốc collection (`GET/POST /notification/api/notifications`,
+      `GET/POST /notification/api/payment-notifications`) **không khớp** (ISSUE-15). Service đăng ký route ở prefix
+      `/notification` **và** ở gốc (`services/notification-service/src/index.ts:188-192`).
+    - `security`: Bearer cho path có route; không kiểm role (ISSUE-01). Service không đọc token → không lọc theo user (ISSUE-33).
+    - Không validate body (ISSUE-62). Lỗi **không thống nhất**: text/plain `Error: …`, `{error}`, body rỗng, `false`,
+      hoặc nuốt lỗi trả `[]` (ISSUE-65, ISSUE-94).
+    - Email API là "open relay" — gửi tới địa chỉ bất kỳ (ISSUE-64). SMTP chưa cấu hình (`MAIL_USERNAME`/`MAIL_PASSWORD` rỗng)
+      → mock "Mail Sent Successfully (Mock)"; lỗi SMTP vẫn **200** (ISSUE-65a).
+  x-source:
+    - services/notification-service/src/index.ts
+    - services/notification-service/src/mailer.ts
+    - services/notification-service/src/schema.ts
+    - services/notification-service/src/db.ts
+    - deploy/apisix/apisix.yaml
+servers:
+  - url: http://localhost:9080
+    description: APISIX gateway (docker compose local). Path trong spec là path tại gateway.
+  - url: http://localhost:8090
+    description: Gọi trực tiếp notification-service (port publish ra host, không xác thực — ISSUE-02).
+tags:
+  - name: email
+    description: Gửi email (route `notif-email`).
+  - name: notifications
+    description: Thông báo chung (route `notif-notifications`).
+  - name: payment-notifications
+    description: Thông báo thanh toán (route `notif-payment`).
+  - name: health
+    description: Health check tĩnh, không có route gateway.
+
+paths:
+  /actuator/health:
+    servers:
+      - url: http://localhost:8090
+        description: Chỉ gọi trực tiếp — không có route gateway.
+    get:
+      operationId: notificationHealth
+      tags: [health]
+      summary: Health check (luôn UP)
+      description: |
+        Payload tĩnh, không kiểm DB/Kafka/SMTP (ISSUE-36). Alias `/notification/actuator/health`. Nguồn: `src/index.ts:28-38`.
+      x-upstream-path: [/actuator/health, /notification/actuator/health]
+      x-gateway-route: none — not exposed
+      x-required-role: none
+      x-known-issues: [ISSUE-36]
+      security: []
+      responses:
+        "200":
+          description: Luôn UP.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Health" }
+
+  # ======================= Email =======================
+  /notification/api/email/sendSimpleMail:
+    post:
+      operationId: sendSimpleMail
+      tags: [email]
+      summary: Gửi email văn bản
+      description: |
+        Gửi tới `recipient` bất kỳ (ISSUE-64). Nguồn: `src/index.ts:42-50`, `src/mailer.ts:27-47`.
+      x-upstream-path: [/notification/api/email/sendSimpleMail, /api/email/sendSimpleMail]
+      x-gateway-route: notif-email
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-64, ISSUE-65, ISSUE-01]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EmailDetails" }
+            example: { recipient: customer@example.com, subject: Xin chào, msgBody: Nội dung }
+      responses:
+        "200": { $ref: "#/components/responses/MailResult" }
+        "401": { $ref: "#/components/responses/GatewayUnauthorized" }
+        "429": { $ref: "#/components/responses/GatewayRateLimited" }
+        "500": { $ref: "#/components/responses/TextError" }
+
+  /notification/api/email/sendMailWithAttachment:
+    post:
+      operationId: sendMailWithAttachment
+      tags: [email]
+      summary: Gửi email "kèm đính kèm" (đính kèm bị bỏ qua)
+      description: |
+        Hành vi **giống hệt** `sendSimpleMail`; field `attachment` bị bỏ qua (ISSUE-33). Nguồn: `src/index.ts:52-60`.
+      x-upstream-path: [/notification/api/email/sendMailWithAttachment, /api/email/sendMailWithAttachment]
+      x-gateway-route: notif-email
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-33, ISSUE-64, ISSUE-65]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EmailDetails" }
+      responses:
+        "200": { $ref: "#/components/responses/MailResult" }
+        "401": { $ref: "#/components/responses/GatewayUnauthorized" }
+        "429": { $ref: "#/components/responses/GatewayRateLimited" }
+        "500": { $ref: "#/components/responses/TextError" }
+
+  /notification/api/email/sendMail:
+    post:
+      operationId: sendMailFromQuery
+      tags: [email]
+      summary: Gửi email từ query string
+      description: |
+        `to` mặc định `""`, `subject` mặc định `Notification`, `body` mặc định `""`. Nguồn: `src/index.ts:62-72`.
+      x-upstream-path: [/notification/api/email/sendMail, /api/email/sendMail]
+      x-gateway-route: notif-email
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-64, ISSUE-65]
+      security:
+        - bearerAuth: []
+      parameters:
+        - { name: to, in: query, schema: { type: string, default: "" } }
+        - { name: subject, in: query, schema: { type: string, default: Notification } }
+        - { name: body, in: query, schema: { type: string, default: "" } }
+      responses:
+        "200": { $ref: "#/components/responses/MailResult" }
+        "401": { $ref: "#/components/responses/GatewayUnauthorized" }
+        "429": { $ref: "#/components/responses/GatewayRateLimited" }
+        "500": { $ref: "#/components/responses/TextError" }
+
+  # ======================= Notifications =======================
+  /notification/api/notifications:
+    servers:
+      - url: http://localhost:8090
+        description: Chỉ gọi trực tiếp — route `/notification/api/notifications/*` không khớp path gốc (ISSUE-15).
+    get:
+      operationId: listNotifications
+      tags: [notifications]
+      summary: Tất cả thông báo của MỌI user
+      description: |
+        Sắp `id DESC`, **không lọc theo user** (ISSUE-33). Lỗi DB → `[]` 200. Nguồn: `src/index.ts:75-82`.
+      x-upstream-path: [/notification/api/notifications, /api/notifications]
+      x-gateway-route: none — not exposed (ISSUE-15)
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-15, ISSUE-33]
+      security: []
+      responses:
+        "200":
+          description: Mảng thông báo (rỗng nếu DB lỗi).
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Notification" }
+    post:
+      operationId: createNotification
+      tags: [notifications]
+      summary: Tạo thông báo
+      description: |
+        Không validate; field thiếu nhận default (`type` = `INFO`, `status` = `UNREAD`). Nguồn: `src/index.ts:95-112`.
+      x-upstream-path: [/notification/api/notifications, /api/notifications]
+      x-gateway-route: none — not exposed (ISSUE-15)
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-15, ISSUE-62, ISSUE-93]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/NotificationCreate" }
+      responses:
+        "201":
+          description: Bản ghi đã tạo.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Notification" }
+        "500": { $ref: "#/components/responses/ObjectError" }
+
+  /notification/api/notifications/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer } }
+    get:
+      operationId: getNotification
+      tags: [notifications]
+      summary: Chi tiết thông báo
+      description: "Không kiểm chủ sở hữu (ISSUE-33). Nguồn: `src/index.ts:84-93`."
+      x-upstream-path: ["/notification/api/notifications/{id}", "/api/notifications/{id}"]
+      x-gateway-route: notif-notifications
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-33, ISSUE-65]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Thông báo.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Notification" }
+        "401": { $ref: "#/components/responses/GatewayUnauthorized" }
+        "404": { description: Không tồn tại — **body rỗng**. }
+        "429": { $ref: "#/components/responses/GatewayRateLimited" }
+        "500": { description: "Lỗi DB (vd id không phải số → `NaN`) — **body rỗng**." }
+    delete:
+      operationId: deleteNotification
+      tags: [notifications]
+      summary: Xóa thông báo
+      description: "Luôn `true` kể cả khi id không tồn tại (ISSUE-65d). Nguồn: `src/index.ts:114-122`."
+      x-upstream-path: ["/notification/api/notifications/{id}", "/api/notifications/{id}"]
+      x-gateway-route: notif-notifications
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-33, ISSUE-65]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: "`true`."
+          content:
+            application/json:
+              schema: { type: boolean, const: true }
+        "401": { $ref: "#/components/responses/GatewayUnauthorized" }
+        "429": { $ref: "#/components/responses/GatewayRateLimited" }
+        "500":
+          description: Lỗi DB → `false`.
+          content:
+            application/json:
+              schema: { type: boolean, const: false }
+
+  # ======================= Payment notifications =======================
+  /notification/api/payment-notifications:
+    servers:
+      - url: http://localhost:8090
+        description: Chỉ gọi trực tiếp — route `/notification/api/payment-notifications/*` không khớp path gốc (ISSUE-15).
+    get:
+      operationId: listPaymentNotifications
+      tags: [payment-notifications]
+      summary: Tất cả thông báo thanh toán
+      description: "Sắp `id DESC`. Lỗi DB → `[]` 200. Nguồn: `src/index.ts:125-135`."
+      x-upstream-path: [/notification/api/payment-notifications, /api/payment-notifications]
+      x-gateway-route: none — not exposed (ISSUE-15)
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-15, ISSUE-33]
+      security: []
+      responses:
+        "200":
+          description: Mảng (rỗng nếu DB lỗi).
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/PaymentNotification" }
+    post:
+      operationId: createPaymentNotification
+      tags: [payment-notifications]
+      summary: Tạo thông báo thanh toán
+      description: |
+        Không validate; `isPayed` thiếu → `true`, `paymentStatus` thiếu → `SUCCESS`, `amount` thiếu → `0` (ISSUE-112).
+        Trả **200** (không phải 201). Nguồn: `src/index.ts:153-171`.
+      x-upstream-path: [/notification/api/payment-notifications, /api/payment-notifications]
+      x-gateway-route: none — not exposed (ISSUE-15)
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-15, ISSUE-62, ISSUE-112, ISSUE-93]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PaymentNotificationCreate" }
+      responses:
+        "200":
+          description: Bản ghi đã tạo.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PaymentNotification" }
+        "500": { $ref: "#/components/responses/ObjectError" }
+
+  /notification/api/payment-notifications/{paymentId}:
+    parameters:
+      - name: paymentId
+        in: path
+        required: true
+        schema: { type: integer }
+        description: So khớp `payment_id = :x OR id = :x` (ISSUE-65g).
+    get:
+      operationId: getPaymentNotification
+      tags: [payment-notifications]
+      summary: Thông báo thanh toán theo paymentId hoặc id
+      description: "Trả phần tử **đầu tiên** khớp. Nguồn: `src/index.ts:137-151`."
+      x-upstream-path: ["/notification/api/payment-notifications/{paymentId}", "/api/payment-notifications/{paymentId}"]
+      x-gateway-route: notif-payment
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-65, ISSUE-33]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Thông báo thanh toán.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PaymentNotification" }
+        "401": { $ref: "#/components/responses/GatewayUnauthorized" }
+        "404": { description: Không tồn tại — **body rỗng**. }
+        "429": { $ref: "#/components/responses/GatewayRateLimited" }
+        "500": { description: Lỗi DB — **body rỗng**. }
+    delete:
+      operationId: deletePaymentNotification
+      tags: [payment-notifications]
+      summary: Xóa thông báo thanh toán theo paymentId hoặc id
+      description: |
+        Xóa **mọi** bản ghi có `payment_id = :x` **hoặc** `id = :x` → có thể xóa nhầm (ISSUE-65g). Luôn 204.
+        Nguồn: `src/index.ts:173-185`.
+      x-upstream-path: ["/notification/api/payment-notifications/{paymentId}", "/api/payment-notifications/{paymentId}"]
+      x-gateway-route: notif-payment
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-65]
+      security:
+        - bearerAuth: []
+      responses:
+        "204": { description: Đã xóa (body rỗng). }
+        "401": { $ref: "#/components/responses/GatewayUnauthorized" }
+        "429": { $ref: "#/components/responses/GatewayRateLimited" }
+        "500": { description: Lỗi DB — **body rỗng**. }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Access token Keycloak (realm `ecommerce`), verify bởi APISIX `openid-connect` (`bearer_only`, JWKS, RS256).
+        Không kiểm role (ISSUE-01); notification-service không đọc token.
+  responses:
+    GatewayUnauthorized:
+      description: |
+        APISIX `openid-connect` từ chối (thiếu/sai/hết hạn token). Header `WWW-Authenticate: Bearer realm="ecommerce"`;
+        body do APISIX/OpenResty sinh.
+    GatewayRateLimited:
+      description: 'APISIX `limit-count` (1200 req/60 s theo `remote_addr`) — body mặc định APISIX (ISSUE-61).'
+    MailResult:
+      description: |
+        Kết quả gửi mail dạng text — **luôn 200** kể cả khi SMTP lỗi (ISSUE-65a). Một trong:
+        `Mail Sent Successfully (Mock)` (SMTP chưa cấu hình), `Mail Sent Successfully...`,
+        `Error while Sending Mail: <err.message>` (`src/mailer.ts:30-46`).
+      content:
+        text/plain:
+          schema:
+            type: string
+            examples: ["Mail Sent Successfully (Mock)", "Mail Sent Successfully...", "Error while Sending Mail: Invalid login"]
+    TextError:
+      description: 'Exception (thường là body không phải JSON) → text/plain `Error: <err.message>` (`src/index.ts:48,58,70`).'
+      content:
+        text/plain:
+          schema: { type: string, example: "Error: JSON Parse error: Unexpected EOF" }
+    ObjectError:
+      description: 'Lỗi insert DB → `{error: err.message}` (ISSUE-93).'
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error: { type: string }
+  schemas:
+    Health:
+      type: object
+      properties:
+        status: { type: string, const: UP }
+        components:
+          type: object
+          properties:
+            db:
+              type: object
+              properties:
+                status: { type: string, const: UP }
+    EmailDetails:
+      type: object
+      description: "`src/mailer.ts:20-25`. Không validate — field thiếu được truyền nguyên cho nodemailer."
+      properties:
+        recipient: { type: string }
+        subject: { type: string }
+        msgBody: { type: string }
+        attachment: { type: string, description: "Bị bỏ qua." }
+    NotificationCreate:
+      type: object
+      properties:
+        userId: { type: string, default: "" }
+        title: { type: string, default: "" }
+        message: { type: string, default: "" }
+        type: { type: string, default: INFO }
+        status: { type: string, default: UNREAD }
+    Notification:
+      type: object
+      description: Hàng Drizzle `notifications` trả nguyên (`src/schema.ts:4-12`).
+      properties:
+        id: { type: integer }
+        userId: { type: [string, "null"] }
+        title: { type: [string, "null"] }
+        message: { type: [string, "null"] }
+        type: { type: [string, "null"] }
+        status: { type: [string, "null"] }
+        createdAt: { type: [string, "null"], format: date-time }
+    PaymentNotificationCreate:
+      type: object
+      properties:
+        paymentId: { type: [integer, "null"] }
+        userId: { type: [string, "null"] }
+        orderId: { type: [integer, "null"] }
+        amount: { type: number, default: 0 }
+        isPayed: { type: boolean, default: true }
+        paymentStatus: { type: string, default: SUCCESS }
+    PaymentNotification:
+      type: object
+      description: Hàng Drizzle `payment_notifications` trả nguyên (`src/schema.ts:14-23`).
+      properties:
+        id: { type: integer }
+        paymentId: { type: [integer, "null"] }
+        userId: { type: [string, "null"] }
+        orderId: { type: [integer, "null"] }
+        amount: { type: [string, "null"], description: "Cột `NUMERIC` → chuỗi (vd `\"0\"`)." }
+        isPayed: { type: [boolean, "null"] }
+        paymentStatus: { type: [string, "null"] }
+        createdAt: { type: [string, "null"], format: date-time }

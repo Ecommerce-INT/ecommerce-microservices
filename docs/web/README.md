@@ -8,7 +8,7 @@ The two frontends are being rewritten from **Next.js 16** to **SvelteKit 3 + Bun
 | [roadmap.md](./roadmap.md) | Phased plan with goals, deliverables and exit criteria |
 | [backlog.md](./backlog.md) | Granular, checkbox-level task list — what is done and what is left |
 
-**Related:** [`../architecture-revamp-plan.md`](../architecture-revamp-plan.md) (platform-wide revamp; its frontend section is implemented by this work) · root [`README.md`](../../README.md).
+**Related:** [`../02-architecture/target-revamp/architecture-revamp-plan.md`](../02-architecture/target-revamp/architecture-revamp-plan.md) (platform-wide revamp) · [As-Is Frontend Architecture](../02-architecture/software/frontend-architecture.md) · [Storefront Service Doc](../03-services/frontend-web.md) · root [`README.md`](../../README.md).
 
 ## Where things live
 

@@ -1,0 +1,321 @@
+openapi: 3.1.0
+info:
+  title: rating-service API
+  version: "1.0.0"
+  description: |
+    Đặc tả OpenAPI **as-is** của `rating-service` (Bun + Hono + Drizzle, port `8089`) — đánh giá sản phẩm cho storefront
+    và backoffice. Mô tả đúng hành vi code hiện tại, không phải thiết kế đích.
+
+    - Tài liệu service: [../../03-services/rating-service.md](../../03-services/rating-service.md)
+    - Định tuyến gateway: [../gateway-routing.md](../gateway-routing.md) · Danh mục API: [../api-catalog.md](../api-catalog.md)
+    - Danh mục lỗi: [../error-catalog.md](../error-catalog.md)
+
+    **Quy ước trong spec này**
+    - Path ghi theo **path tại gateway APISIX**. Route `rating-storefront` (`/storefront/ratings`, `/storefront/ratings/*`)
+      rewrite `^/(.*)` → `/rating/$1`; route `rating-backoffice` (`/rating/backoffice/ratings/*`) giữ nguyên path.
+      Service đăng ký route ở prefix `/rating` **và** ở gốc (`services/rating-service/src/index.ts:150-154`) nên mọi path
+      trong spec gọi được trực tiếp port `8089`. `x-upstream-path` liệt kê các path service thực nhận.
+    - `security`: route storefront **public** (kể cả `POST`) — ISSUE-03; route backoffice có `openid-connect` (`bearer_only`)
+      nhưng không kiểm role (ISSUE-01). `GET /rating/backoffice/ratings` không khớp route `/*` (ISSUE-15).
+    - Danh tính người đánh giá lấy bằng cách **decode base64 payload JWT không verify** (`extractUser`, `src/index.ts:39-58`);
+      không có token → `createdBy = "anonymous"`, `firstName = "Customer"` (ISSUE-03).
+    - Lỗi: `{statusCode: "<code>", message[, errors]}`; 500 trả nguyên `err.message` (ISSUE-93).
+    - Mọi request qua gateway chịu `limit-count` 1200 req/60 s theo `remote_addr` → 429 (ISSUE-61).
+  x-source:
+    - services/rating-service/src/index.ts
+    - services/rating-service/src/types.ts
+    - services/rating-service/src/service.ts
+    - services/rating-service/src/schema.ts
+    - deploy/apisix/apisix.yaml
+servers:
+  - url: http://localhost:9080
+    description: APISIX gateway (docker compose local). Path trong spec là path tại gateway.
+  - url: http://localhost:8089
+    description: Gọi trực tiếp rating-service (port publish ra host, không xác thực — ISSUE-02).
+tags:
+  - name: storefront
+    description: Đánh giá phía khách (route `rating-storefront`, public).
+  - name: backoffice
+    description: Quản trị đánh giá (route `rating-backoffice`, Bearer).
+  - name: health
+    description: Health check tĩnh, không có route gateway.
+
+paths:
+  /actuator/health:
+    servers:
+      - url: http://localhost:8089
+        description: Chỉ gọi trực tiếp — không có route gateway.
+    get:
+      operationId: ratingHealth
+      tags: [health]
+      summary: Health check (luôn UP)
+      description: |
+        Payload tĩnh, không kiểm DB (ISSUE-36). Alias `/rating/actuator/health`. Nguồn: `src/index.ts:27-37`.
+      x-upstream-path: [/actuator/health, /rating/actuator/health]
+      x-gateway-route: none — not exposed
+      x-required-role: none
+      x-known-issues: [ISSUE-36]
+      security: []
+      responses:
+        "200":
+          description: Luôn UP.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Health" }
+
+  /storefront/ratings/products/{productId}:
+    get:
+      operationId: listRatingsByProduct
+      tags: [storefront]
+      summary: Đánh giá theo sản phẩm (phân trang)
+      description: |
+        Sắp `created_on DESC`. `pageNo`/`pageSize` chỉ `parseInt` — không giới hạn trên, `pageNo` âm → offset âm → lỗi DB 500
+        (ISSUE-111). Không kiểm sản phẩm tồn tại. Nguồn: `src/index.ts:102-116`, `src/service.ts:21-48`.
+      x-upstream-path: ["/rating/storefront/ratings/products/{productId}", "/storefront/ratings/products/{productId}"]
+      x-gateway-route: rating-storefront
+      x-required-role: none
+      x-known-issues: [ISSUE-111, ISSUE-93]
+      security: []
+      parameters:
+        - { name: productId, in: path, required: true, schema: { type: integer } }
+        - { name: pageNo, in: query, schema: { type: integer, default: 0 } }
+        - { name: pageSize, in: query, schema: { type: integer, default: 5 } }
+      responses:
+        "200":
+          description: Trang đánh giá.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RatingListVm" }
+        "400":
+          description: productId không phải số.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BunStatusError" }
+              example: { statusCode: "400", message: Invalid productId }
+        "429": { $ref: "#/components/responses/GatewayRateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /storefront/ratings:
+    post:
+      operationId: createRating
+      tags: [storefront]
+      summary: Tạo đánh giá (public)
+      description: |
+        Validate Zod `RatingPostVmSchema` (`src/types.ts:3-8`). Danh tính lấy từ header `Authorization` **nếu có**, decode
+        không verify — có thể giả mạo; không có token → `anonymous`. Không chống trùng, không kiểm `productId` tồn tại (ISSUE-62).
+        Trả **200** thay vì 201 (ISSUE-65h). Nguồn: `src/index.ts:119-133`, `src/service.ts:94-116`.
+      x-upstream-path: [/rating/storefront/ratings, /storefront/ratings]
+      x-gateway-route: rating-storefront
+      x-required-role: none
+      x-known-issues: [ISSUE-03, ISSUE-62, ISSUE-65, ISSUE-93]
+      security: []
+      parameters:
+        - name: Authorization
+          in: header
+          required: false
+          schema: { type: string, example: "Bearer eyJ..." }
+          description: Tùy chọn. Chỉ dùng để lấy `sub`, `given_name`/`name`, `family_name` — **không verify chữ ký**.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RatingPostVm" }
+            example: { content: Sản phẩm tốt, star: 5, productId: 1, productName: Áo thun }
+      responses:
+        "200":
+          description: Đánh giá vừa tạo.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RatingVm" }
+        "400":
+          description: Body không qua Zod; `errors` là mảng issue Zod v4.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BunValidationError" }
+              example:
+                statusCode: "400"
+                message: Validation error
+                errors:
+                  - { origin: number, code: too_big, maximum: 5, inclusive: true, path: [star], message: "Too big: expected number to be <=5" }
+        "429": { $ref: "#/components/responses/GatewayRateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /storefront/ratings/product/{productId}/average-star:
+    get:
+      operationId: getAverageStar
+      tags: [storefront]
+      summary: Điểm sao trung bình của sản phẩm
+      description: |
+        Làm tròn 2 chữ số. `productId` không phải số **hoặc lỗi DB** → vẫn `200` với `0` (nuốt lỗi — ISSUE-65).
+        Nguồn: `src/index.ts:136-147`, `src/service.ts:127-144`.
+      x-upstream-path: ["/rating/storefront/ratings/product/{productId}/average-star", "/storefront/ratings/product/{productId}/average-star"]
+      x-gateway-route: rating-storefront
+      x-required-role: none
+      x-known-issues: [ISSUE-65]
+      security: []
+      parameters:
+        - { name: productId, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200":
+          description: Số sao trung bình (0 khi không có đánh giá / id sai / lỗi).
+          content:
+            application/json:
+              schema: { type: number }
+              example: 4.33
+        "429": { $ref: "#/components/responses/GatewayRateLimited" }
+
+  /rating/backoffice/ratings:
+    servers:
+      - url: http://localhost:8089
+        description: Chỉ gọi trực tiếp — route `/rating/backoffice/ratings/*` không khớp path gốc (ISSUE-15).
+    get:
+      operationId: filterRatings
+      tags: [backoffice]
+      summary: Lọc đánh giá (backoffice)
+      description: |
+        Lọc `LIKE` không phân biệt hoa thường theo `product_name`, `first_name + ' ' + last_name`, `content`, và khoảng
+        `created_on`. `createdFrom`/`createdTo` sai định dạng → `Invalid Date` → 500. Nguồn: `src/index.ts:62-85`, `src/service.ts:50-92`.
+      x-upstream-path: [/rating/backoffice/ratings, /backoffice/ratings]
+      x-gateway-route: none — not exposed (route rating-backoffice không khớp path gốc, ISSUE-15)
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-15, ISSUE-01, ISSUE-111, ISSUE-93]
+      security: []
+      parameters:
+        - { name: productName, in: query, schema: { type: string, default: "" } }
+        - { name: customerName, in: query, schema: { type: string, default: "" } }
+        - { name: message, in: query, schema: { type: string, default: "" } }
+        - { name: createdFrom, in: query, schema: { type: string, format: date-time, default: "1970-01-01T00:00:00.000Z" } }
+        - { name: createdTo, in: query, schema: { type: string, format: date-time }, description: "Mặc định thời điểm hiện tại." }
+        - { name: pageNo, in: query, schema: { type: integer, default: 0 } }
+        - { name: pageSize, in: query, schema: { type: integer, default: 5 } }
+      responses:
+        "200":
+          description: Trang đánh giá.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RatingListVm" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /rating/backoffice/ratings/{id}:
+    delete:
+      operationId: deleteRating
+      tags: [backoffice]
+      summary: Xóa đánh giá
+      description: |
+        Luôn trả `ResponeStatusVm` "thành công" kể cả khi id không tồn tại (ISSUE-65d). Nguồn: `src/index.ts:88-99`, `src/service.ts:118-125`.
+      x-upstream-path: ["/rating/backoffice/ratings/{id}", "/backoffice/ratings/{id}"]
+      x-gateway-route: rating-backoffice
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-01, ISSUE-65]
+      security:
+        - bearerAuth: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200":
+          description: Kết quả (cố định).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ResponeStatusVm" }
+              example: { title: Delete Rating, message: The request has been processed successfully, statusCode: "200" }
+        "400":
+          description: id không phải số.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BunStatusError" }
+              example: { statusCode: "400", message: Invalid ID }
+        "401": { $ref: "#/components/responses/GatewayUnauthorized" }
+        "429": { $ref: "#/components/responses/GatewayRateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Access token Keycloak (realm `ecommerce`), verify bởi APISIX `openid-connect` (`bearer_only`, JWKS, RS256) cho route
+        `rating-backoffice`. Không kiểm role (ISSUE-01).
+  responses:
+    GatewayUnauthorized:
+      description: |
+        APISIX `openid-connect` từ chối (thiếu/sai/hết hạn token). Header `WWW-Authenticate: Bearer realm="ecommerce"`;
+        body do APISIX/OpenResty sinh.
+    GatewayRateLimited:
+      description: 'APISIX `limit-count` (1200 req/60 s theo `remote_addr`) — body mặc định APISIX (ISSUE-61).'
+    InternalError:
+      description: Exception (body không phải JSON, lỗi DB, ngày sai…); `message` = `err.message` nguyên văn (ISSUE-93).
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/BunStatusError" }
+          example: { statusCode: "500", message: "JSON Parse error: Unexpected EOF" }
+  schemas:
+    Health:
+      type: object
+      properties:
+        status: { type: string, const: UP }
+        components:
+          type: object
+          properties:
+            db:
+              type: object
+              properties:
+                status: { type: string, const: UP }
+    BunStatusError:
+      type: object
+      required: [statusCode, message]
+      properties:
+        statusCode: { type: string, examples: ["400", "500"] }
+        message: { type: string }
+    BunValidationError:
+      allOf:
+        - $ref: "#/components/schemas/BunStatusError"
+        - type: object
+          properties:
+            errors:
+              type: array
+              items:
+                type: object
+                properties:
+                  code: { type: string }
+                  path: { type: array, items: { type: [string, integer] } }
+                  message: { type: string }
+                additionalProperties: true
+    RatingPostVm:
+      type: object
+      description: Zod `RatingPostVmSchema` (`src/types.ts:3-8`).
+      required: [star, productId]
+      properties:
+        content: { type: string, default: "", description: "Không giới hạn độ dài (ISSUE-62)." }
+        star: { type: integer, minimum: 1, maximum: 5 }
+        productId: { type: integer, description: "Không kiểm tồn tại." }
+        productName: { type: string, default: "" }
+    RatingVm:
+      type: object
+      description: "`mapRow` (`src/service.ts:6-18`)."
+      properties:
+        id: { type: integer }
+        content: { type: string }
+        star: { type: integer }
+        productId: { type: integer }
+        productName: { type: string }
+        createdBy: { type: string, description: "`sub` từ token (không verify) hoặc `anonymous`." }
+        lastName: { type: string }
+        firstName: { type: string, description: "`given_name`/`name` từ token hoặc `Customer`." }
+        createdOn: { type: string, format: date-time }
+    RatingListVm:
+      type: object
+      properties:
+        ratingList:
+          type: array
+          items: { $ref: "#/components/schemas/RatingVm" }
+        totalElements: { type: integer }
+        totalPages: { type: integer }
+    ResponeStatusVm:
+      type: object
+      description: Tên kiểu giữ nguyên chính tả trong code (`src/types.ts:30-34`).
+      properties:
+        title: { type: string }
+        message: { type: string }
+        statusCode: { type: string }

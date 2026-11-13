@@ -1,0 +1,401 @@
+openapi: 3.1.0
+info:
+  title: payment-service API
+  version: "1.0.0"
+  description: |
+    Đặc tả OpenAPI **as-is** của `payment-service` (Go, chi, port `8085`) — ghi nhận thanh toán và publish Kafka
+    (`SUCCESSFUL`, `paymentCompleted`) mỗi lần tạo payment. Mô tả đúng hành vi code hiện tại, không phải thiết kế đích.
+
+    - Tài liệu service: [../../03-services/payment-service.md](../../03-services/payment-service.md)
+    - Định tuyến gateway: [../gateway-routing.md](../gateway-routing.md) · Danh mục API: [../api-catalog.md](../api-catalog.md)
+
+    **Quy ước trong spec này**
+    - Path ghi theo **path tại gateway APISIX**; `x-upstream-path` là path sau `proxy-rewrite` (`^/(.*)` → `/payment/$1`).
+      Service đăng ký `/api/payments` và `/payment/api/payments` (`services/payment-service/internal/handler/payment_handler.go:28-30`).
+    - Thành công: **JSON thô**; lỗi: `ErrorVm {statusCode, title, detail}` (ISSUE-29); 500 trả lỗi nội bộ nguyên văn (ISSUE-93).
+    - Mọi route Bearer (route `payment`) — chỉ xác thực, không kiểm role (ISSUE-01). Không tích hợp cổng thanh toán (ISSUE-25d).
+    - DB không kết nối → stub (id = 1, mảng rỗng, 404) (ISSUE-28).
+    - Mọi route chịu `limit-count` global của APISIX (429 — ISSUE-61).
+  x-source:
+    - services/payment-service/internal/handler/payment_handler.go
+    - services/payment-service/internal/model/payment.go
+    - services/payment-service/internal/service/payment_service.go
+    - services/payment-service/internal/repository/payment_repository.go
+    - deploy/apisix/apisix.yaml
+servers:
+  - url: http://localhost:9080
+    description: APISIX gateway (docker compose local). Path trong spec là path tại gateway.
+  - url: http://localhost:8085
+    description: Gọi trực tiếp payment-service (port publish ra host, không kiểm token — ISSUE-02). Path gateway vẫn hợp lệ.
+tags:
+  - name: payments
+    description: Payment (route `payment`, Bearer).
+  - name: health
+    description: Health check tĩnh, không có route gateway.
+
+paths:
+  /actuator/health:
+    servers:
+      - url: http://localhost:8085
+        description: Chỉ gọi trực tiếp — không có route gateway.
+    get:
+      operationId: paymentHealth
+      tags: [health]
+      summary: Health check (luôn UP)
+      description: 'Payload tĩnh `{"status":"UP","components":{"db":{"status":"UP"}}}` (ISSUE-36). Alias: `/payment/actuator/health`, `/health`.'
+      x-upstream-path: [/actuator/health, /payment/actuator/health, /health]
+      x-gateway-route: none — not exposed
+      x-known-issues: [ISSUE-36]
+      security: []
+      responses:
+        "200":
+          description: Luôn UP.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Health" }
+
+  /api/payments:
+    get:
+      operationId: listPayments
+      tags: [payments]
+      summary: Tất cả payment
+      description: 'Sắp `payment_id ASC`. Nguồn: `payment_handler.go:55-62`, `payment_repository.go:89-111`.'
+      x-upstream-path: /payment/api/payments
+      x-gateway-route: payment
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-01]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Mảng payment.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/PaymentDto" }
+        "401": { $ref: "#/components/responses/GatewayUnauthorized" }
+        "500": { $ref: "#/components/responses/InternalError" }
+    post:
+      operationId: createPayment
+      tags: [payments]
+      summary: Tạo payment + publish Kafka
+      description: |
+        1. Nếu có `orderId` và đã tồn tại payment `is_payed = TRUE` cho order đó → **404** "Order has already been paid." (nên là 409 — ISSUE-25a).
+        2. Insert: `isPayed` null → FALSE; `paymentStatus` vắng mặt gửi `''` → `COALESCE('', 'NOT_STARTED')` = `''` nên cột thành **chuỗi rỗng** (ISSUE-25b, ISSUE-59).
+        3. Publish `KafkaPaymentDto` lên topic `SUCCESSFUL` và `paymentCompleted` **mỗi lần**, bất kể trạng thái; lỗi gửi bị bỏ qua (ISSUE-18, ISSUE-17).
+           Writer đồng bộ → mỗi lần gửi chờ tới ~1s (ISSUE-57).
+        Checkout ONLINE gửi `isPayed: true` dù chưa nhận tiền (ISSUE-75). Trả 200 (không phải 201) với bản ghi đọc lại từ DB.
+        DB không kết nối → echo body với `paymentId: 1` (vẫn publish Kafka).
+        Nguồn: `payment_handler.go:108-125`, `payment_service.go:87-116`, `payment_repository.go:181-224`.
+      x-upstream-path: /payment/api/payments
+      x-gateway-route: payment
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-25, ISSUE-18, ISSUE-17, ISSUE-57, ISSUE-59, ISSUE-75, ISSUE-76, ISSUE-01, ISSUE-93]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PaymentDto" }
+            example: { isPayed: false, paymentStatus: NOT_STARTED, orderId: 42 }
+      responses:
+        "200":
+          description: Payment vừa tạo.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PaymentDto" }
+        "400": { $ref: "#/components/responses/BadRequestBody" }
+        "401": { $ref: "#/components/responses/GatewayUnauthorized" }
+        "404":
+          description: 'Order đã có payment `is_payed = TRUE` (ISSUE-25a).'
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorVm" }
+              example: { statusCode: "404", title: Not found, detail: Order has already been paid. }
+        "500": { $ref: "#/components/responses/InternalError" }
+    put:
+      operationId: updatePaymentFromBody
+      tags: [payments]
+      summary: Cập nhật payment theo `paymentId` trong body
+      description: |
+        Thiếu `paymentId` → **500** "paymentId is required for update" (lỗi validate nhưng không map 400 — ISSUE-93).
+        `COALESCE` từng cột; `paymentStatus` vắng mặt → ghi đè thành `''` (ISSUE-25b, ISSUE-59).
+        Nguồn: `payment_handler.go:127-144`, `payment_service.go:118-134`, `payment_repository.go:226-249`.
+      x-upstream-path: /payment/api/payments
+      x-gateway-route: payment
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-25, ISSUE-59, ISSUE-01, ISSUE-93]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PaymentDto" }
+      responses:
+        "200":
+          description: Payment đọc lại từ DB.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PaymentDto" }
+        "400": { $ref: "#/components/responses/BadRequestBody" }
+        "401": { $ref: "#/components/responses/GatewayUnauthorized" }
+        "404": { $ref: "#/components/responses/PaymentNotFound" }
+        "500":
+          description: 'Lỗi DB **hoặc** thiếu `paymentId` ("paymentId is required for update").'
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorVm" }
+
+  /api/payments/all:
+    get:
+      operationId: listPaymentsPaged
+      tags: [payments]
+      summary: Payment phân trang
+      description: |
+        Tham số không phải số → 0 rồi áp default; `page < 0` → 0; `size <= 0` → 10.
+        `sortBy` ∈ `orderId|order_id`, `userId|user_id`, `isPayed|is_payed`, khác → `payment_id`; `sortOrder` = `desc` → DESC.
+        Nguồn: `payment_handler.go:64-76`, `payment_repository.go:113-158`.
+      x-upstream-path: /payment/api/payments/all
+      x-gateway-route: payment
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-01]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer, default: 0, minimum: 0 }
+        - name: size
+          in: query
+          schema: { type: integer, default: 10 }
+        - name: sortBy
+          in: query
+          schema: { type: string, default: paymentId, description: 'orderId | order_id | userId | user_id | isPayed | is_payed; khác → payment_id.' }
+        - name: sortOrder
+          in: query
+          schema: { type: string, default: asc, enum: [asc, desc, ASC, DESC] }
+      responses:
+        "200":
+          description: Trang payment.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PaymentPage" }
+        "401": { $ref: "#/components/responses/GatewayUnauthorized" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /api/payments/getOrder/{orderId}:
+    parameters:
+      - name: orderId
+        in: path
+        required: true
+        description: '`strconv.Atoi`; không phải số → 400 "Invalid orderId".'
+        schema: { type: integer }
+    get:
+      operationId: getPaymentOrderStub
+      tags: [payments]
+      summary: 'STUB — luôn trả `{"orderId": <orderId>}`'
+      description: 'Không gọi order-service, không đọc DB; luôn trả object chỉ có `orderId` (ISSUE-25c). Nguồn: `payment_handler.go:97-106`, `payment_service.go:81-85`.'
+      x-upstream-path: /payment/api/payments/getOrder/{orderId}
+      x-gateway-route: payment
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-25, ISSUE-01]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: 'Luôn `{"orderId": <orderId>}` (không bao giờ null).'
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrderDto" }
+              example: { orderId: 42 }
+        "400":
+          description: '"Invalid orderId".'
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorVm" }
+        "401": { $ref: "#/components/responses/GatewayUnauthorized" }
+
+  /api/payments/{paymentId}:
+    parameters:
+      - name: paymentId
+        in: path
+        required: true
+        description: '`strconv.Atoi`; không phải số → 400 "Invalid paymentId".'
+        schema: { type: integer }
+    get:
+      operationId: getPaymentById
+      tags: [payments]
+      summary: Chi tiết payment
+      description: 'DB không kết nối → 404. Nguồn: `payment_handler.go:78-95`.'
+      x-upstream-path: /payment/api/payments/{paymentId}
+      x-gateway-route: payment
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-01]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Payment.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PaymentDto" }
+        "400": { $ref: "#/components/responses/BadRequestPaymentId" }
+        "401": { $ref: "#/components/responses/GatewayUnauthorized" }
+        "404": { $ref: "#/components/responses/PaymentNotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+    put:
+      operationId: updatePaymentById
+      tags: [payments]
+      summary: Cập nhật payment theo path
+      description: '`COALESCE` từng cột; `paymentStatus` vắng mặt → ghi đè thành chuỗi rỗng (ISSUE-25b, ISSUE-59). Nguồn: `payment_handler.go:146-169`.'
+      x-upstream-path: /payment/api/payments/{paymentId}
+      x-gateway-route: payment
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-25, ISSUE-59, ISSUE-01, ISSUE-93]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PaymentDto" }
+      responses:
+        "200":
+          description: Payment đọc lại từ DB.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PaymentDto" }
+        "400":
+          description: '"Invalid paymentId" hoặc "Invalid request body".'
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorVm" }
+        "401": { $ref: "#/components/responses/GatewayUnauthorized" }
+        "404": { $ref: "#/components/responses/PaymentNotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+    delete:
+      operationId: deletePaymentById
+      tags: [payments]
+      summary: Xóa payment
+      description: '200 `true` kể cả không tồn tại. Nguồn: `payment_handler.go:171-183`.'
+      x-upstream-path: /payment/api/payments/{paymentId}
+      x-gateway-route: payment
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-01]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Luôn `true` khi không lỗi.
+          content:
+            application/json:
+              schema: { type: boolean, const: true }
+        "400": { $ref: "#/components/responses/BadRequestPaymentId" }
+        "401": { $ref: "#/components/responses/GatewayUnauthorized" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Access token Keycloak (realm `ecommerce`), verify bởi APISIX `openid-connect` (`bearer_only`, JWKS, RS256).
+        Không kiểm role (ISSUE-01); service không tự verify (ISSUE-02).
+  responses:
+    GatewayUnauthorized:
+      description: APISIX `openid-connect` từ chối (thiếu/sai/hết hạn token). Body do APISIX sinh, không phải `ErrorVm`.
+    BadRequestBody:
+      description: '"Invalid request body".'
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorVm" }
+          example: { statusCode: "400", title: Bad request, detail: Invalid request body }
+    BadRequestPaymentId:
+      description: '"Invalid paymentId".'
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorVm" }
+    PaymentNotFound:
+      description: '"payment not found".'
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorVm" }
+          example: { statusCode: "404", title: Not found, detail: payment not found }
+    InternalError:
+      description: Lỗi DB/nội bộ; `detail` = thông điệp lỗi nguyên văn (ISSUE-93).
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorVm" }
+  schemas:
+    Health:
+      type: object
+      properties:
+        status: { type: string, const: UP }
+        components:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              status: { type: string, const: UP }
+      example: { status: UP, components: { db: { status: UP } } }
+    ErrorVm:
+      type: object
+      description: '`response.ErrorVm` (`services/shared/response/response.go:6-10`).'
+      required: [statusCode, title, detail]
+      properties:
+        statusCode: { type: string, enum: ["400", "404", "500"] }
+        title: { type: string, enum: [Bad request, Not found, Internal server error] }
+        detail: { type: string }
+    OrderDto:
+      type: object
+      description: '`model.OrderDto` (`internal/model/payment.go:3-9`). Chỉ `orderId` được điền.'
+      properties:
+        orderId: { type: integer }
+        orderDate: { type: string }
+        orderDesc: { type: string }
+        orderFee: { type: number, format: double }
+        productId: { type: integer }
+    UserDto:
+      type: object
+      description: '`model.UserDto` — chỉ `id` được điền.'
+      properties:
+        id: { type: integer, format: int64 }
+        fullname: { type: string }
+        username: { type: string }
+        email: { type: string }
+    PaymentDto:
+      type: object
+      description: |
+        `model.PaymentDto` (`internal/model/payment.go:18-26`) — mọi field `omitempty`. `order`/`user` chỉ dựng từ id
+        (không gọi service khác). `paymentStatus` rỗng bị ẩn.
+      properties:
+        paymentId: { type: integer }
+        isPayed: { type: boolean, description: 'Insert: null → FALSE.' }
+        paymentStatus:
+          type: string
+          description: 'Chuỗi tự do (không enum ở server). Giá trị BFF dùng: `NOT_STARTED`, `IN_PROGRESS`. Mặc định cột `NOT_STARTED` nhưng không áp dụng khi gửi rỗng (ISSUE-25b).'
+          examples: [NOT_STARTED, IN_PROGRESS]
+        orderId: { type: integer }
+        userId: { type: integer, format: int64 }
+        order: { $ref: "#/components/schemas/OrderDto" }
+        user: { $ref: "#/components/schemas/UserDto" }
+    PaymentPage:
+      type: object
+      description: '`model.PageResponse[PaymentDto]` (`internal/model/payment.go:36-46`). `last` = `number >= totalPages-1`.'
+      properties:
+        content:
+          type: array
+          items: { $ref: "#/components/schemas/PaymentDto" }
+        totalElements: { type: integer, format: int64 }
+        totalPages: { type: integer }
+        size: { type: integer }
+        number: { type: integer }
+        numberOfElements: { type: integer }
+        first: { type: boolean }
+        last: { type: boolean }
+        empty: { type: boolean }

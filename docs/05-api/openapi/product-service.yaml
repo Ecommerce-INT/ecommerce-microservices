@@ -1,0 +1,748 @@
+openapi: 3.1.0
+info:
+  title: product-service API
+  version: "1.0.0"
+  description: |
+    Đặc tả OpenAPI **as-is** của `product-service` (Go, chi, port `8086`) — gồm danh mục (categories), sản phẩm (products)
+    và sản phẩm yêu thích (favourites). Mô tả đúng hành vi code hiện tại, không phải thiết kế đích.
+
+    - Tài liệu service: [../../03-services/product-service.md](../../03-services/product-service.md)
+    - Định tuyến gateway: [../gateway-routing.md](../gateway-routing.md) · Danh mục API: [../api-catalog.md](../api-catalog.md)
+
+    **Quy ước trong spec này**
+    - Path ghi theo **path tại gateway APISIX**. `x-upstream-path` là path service nhận sau `proxy-rewrite`
+      (`^/(.*)` → `/product/$1` cho route `product-catalog`, `/favourite/$1` cho route `favourite`).
+    - Category/product đăng ký ở prefix `/product` và gốc (`services/product-service/internal/handler/product_handler.go:27-31`);
+      favourites ở `/favourite/api/favourites`, `/product/api/favourites`, `/api/favourites` (`favourite_handler.go:26-29`).
+    - Thành công: **JSON thô** (không envelope). Lỗi: `ErrorVm {statusCode, title, detail}` (`services/shared/response/response.go:6-34`) — ISSUE-29.
+      Lỗi 500 trả nguyên thông điệp lỗi pgx trong `detail` (ISSUE-93).
+    - Route `product-catalog` **không có `openid-connect` và không giới hạn method** → mọi thao tác ghi sản phẩm/danh mục
+      đều public (ISSUE-102). Route `favourite` có Bearer nhưng trỏ `upstream_id: 7` không tồn tại → không tới được (ISSUE-13).
+    - Không có validate input nào (ISSUE-35). Khi DB không kết nối, service vẫn chạy và trả stub (ISSUE-28).
+    - Mọi route chịu `limit-count` global của APISIX (429 — ISSUE-61).
+  x-source:
+    - services/product-service/main.go
+    - services/product-service/internal/handler/product_handler.go
+    - services/product-service/internal/handler/favourite_handler.go
+    - services/product-service/internal/model/product.go
+    - services/product-service/internal/model/favourite.go
+    - services/product-service/internal/repository/product_repo.go
+    - services/product-service/internal/repository/favourite_repo.go
+    - deploy/apisix/apisix.yaml
+servers:
+  - url: http://localhost:9080
+    description: APISIX gateway (docker compose local). Path trong spec là path tại gateway.
+  - url: http://localhost:8086
+    description: |
+      Gọi trực tiếp product-service (port publish ra host — ISSUE-02). Path gateway vẫn hợp lệ vì service đăng ký cả path gốc.
+tags:
+  - name: categories
+    description: Danh mục sản phẩm (route `product-catalog`, public mọi method).
+  - name: products
+    description: Sản phẩm (route `product-catalog`, public mọi method).
+  - name: favourites
+    description: Sản phẩm yêu thích — route gateway `favourite` hỏng (ISSUE-13), chỉ gọi trực tiếp được.
+  - name: health
+    description: Health check tĩnh, không có route gateway.
+
+paths:
+  /actuator/health:
+    servers:
+      - url: http://localhost:8086
+        description: Chỉ gọi trực tiếp — không có route gateway.
+    get:
+      operationId: productHealth
+      tags: [health]
+      summary: Health check (luôn UP)
+      description: |
+        Payload tĩnh `{"status":"UP","components":{"db":{"status":"UP"}}}` kể cả khi DB không kết nối (ISSUE-36).
+        Alias: `/product/actuator/health`, `/favourite/actuator/health`.
+      x-upstream-path: [/actuator/health, /product/actuator/health, /favourite/actuator/health]
+      x-gateway-route: none — not exposed
+      x-known-issues: [ISSUE-36]
+      security: []
+      responses:
+        "200":
+          description: Luôn UP.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Health" }
+
+  # ======================= Categories =======================
+  /api/categories:
+    get:
+      operationId: listCategories
+      tags: [categories]
+      summary: Danh sách tất cả danh mục (mảng thô)
+      description: |
+        Sắp theo `category_id ASC`. Mỗi phần tử chỉ có `categoryId`, `categoryTitle`, `imageUrl` (rỗng nếu NULL) —
+        **`parentCategory` không bao giờ được trả**. Mọi query param bị bỏ qua; BFF mong đợi Page (ISSUE-48).
+        DB không kết nối → `[]`. Nguồn: `product_handler.go:51-58`, `product_repo.go:80-97`.
+      x-upstream-path: /product/api/categories
+      x-gateway-route: product-catalog
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-48]
+      security: []
+      responses:
+        "200":
+          description: Mảng danh mục.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/CategoryDto" }
+        "500": { $ref: "#/components/responses/InternalError" }
+    post:
+      operationId: createCategory
+      tags: [categories]
+      summary: Tạo danh mục (public tại gateway)
+      description: |
+        `categoryId` trong body bị bỏ qua; chỉ lưu `parentCategory.categoryId` khi > 0. Trả **201** với chính body + `categoryId` mới.
+        DB không kết nối → 201 với `categoryId: 1` (stub, ISSUE-28). Nguồn: `product_handler.go:78-90`, `product_repo.go:118-138`.
+      x-upstream-path: /product/api/categories
+      x-gateway-route: product-catalog
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-102, ISSUE-01, ISSUE-35, ISSUE-28, ISSUE-93]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CategoryDto" }
+      responses:
+        "201":
+          description: Danh mục vừa tạo (echo body + `categoryId`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CategoryDto" }
+        "400": { $ref: "#/components/responses/BadRequestBody" }
+        "500":
+          description: Lỗi DB (vd `parentCategory.categoryId` không tồn tại → vi phạm FK).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorVm" }
+    put:
+      operationId: updateCategoryFromBody
+      tags: [categories]
+      summary: Cập nhật danh mục theo `categoryId` trong body (public tại gateway)
+      description: |
+        Ghi đè **toàn bộ** `category_title`, `image_url`, `parent_category_id` (field vắng = rỗng/NULL). **Không 404** khi id không tồn tại
+        (UPDATE 0 dòng vẫn 200). Body thiếu `categoryId` → cập nhật id 0. Nguồn: `product_handler.go:92-104`, `product_repo.go:140-160`.
+      x-upstream-path: /product/api/categories
+      x-gateway-route: product-catalog
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-102, ISSUE-01, ISSUE-35, ISSUE-93]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CategoryDto" }
+      responses:
+        "200":
+          description: Echo body + `categoryId`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CategoryDto" }
+        "400": { $ref: "#/components/responses/BadRequestBody" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /api/categories/paging:
+    get:
+      operationId: listCategoriesPaging
+      tags: [categories]
+      summary: Như GET /api/categories — KHÔNG phân trang
+      description: 'Cùng handler `ListCategories`; tên gợi ý phân trang nhưng trả toàn bộ mảng (ISSUE-35).'
+      x-upstream-path: /product/api/categories/paging
+      x-gateway-route: product-catalog
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-35, ISSUE-48]
+      security: []
+      responses:
+        "200":
+          description: Mảng danh mục.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/CategoryDto" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /api/categories/paging-and-sorting:
+    get:
+      operationId: listCategoriesPagingAndSorting
+      tags: [categories]
+      summary: Như GET /api/categories — KHÔNG phân trang/sắp xếp
+      description: 'Cùng handler `ListCategories` (ISSUE-35).'
+      x-upstream-path: /product/api/categories/paging-and-sorting
+      x-gateway-route: product-catalog
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-35, ISSUE-48]
+      security: []
+      responses:
+        "200":
+          description: Mảng danh mục.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/CategoryDto" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /api/categories/{categoryId}:
+    parameters:
+      - name: categoryId
+        in: path
+        required: true
+        description: '`strconv.Atoi`; không phải số → 400 "Invalid categoryId".'
+        schema: { type: integer }
+    get:
+      operationId: getCategoryById
+      tags: [categories]
+      summary: Chi tiết danh mục
+      description: 'Không trả `parentCategory`. DB không kết nối → 404. Nguồn: `product_handler.go:60-76`.'
+      x-upstream-path: /product/api/categories/{categoryId}
+      x-gateway-route: product-catalog
+      x-required-role: none (ISSUE-01)
+      security: []
+      responses:
+        "200":
+          description: Danh mục.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CategoryDto" }
+        "400": { $ref: "#/components/responses/BadRequestId" }
+        "404":
+          description: '`detail` = "not found: category with id <id> not found".'
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorVm" }
+        "500": { $ref: "#/components/responses/InternalError" }
+    put:
+      operationId: updateCategoryById
+      tags: [categories]
+      summary: Cập nhật danh mục theo path (public tại gateway)
+      description: 'Ghi đè toàn bộ cột như PUT /api/categories; không 404 khi id không tồn tại. Nguồn: `product_handler.go:106-123`.'
+      x-upstream-path: /product/api/categories/{categoryId}
+      x-gateway-route: product-catalog
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-102, ISSUE-01, ISSUE-35, ISSUE-93]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CategoryDto" }
+      responses:
+        "200":
+          description: Echo body với `categoryId` = id trên path.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CategoryDto" }
+        "400":
+          description: '"Invalid categoryId" hoặc "Invalid request body".'
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorVm" }
+        "500": { $ref: "#/components/responses/InternalError" }
+    delete:
+      operationId: deleteCategory
+      tags: [categories]
+      summary: Xóa danh mục (public tại gateway)
+      description: |
+        200 `true` kể cả id không tồn tại. Danh mục đang được sản phẩm/danh mục con tham chiếu → lỗi FK → 500 với `detail` là lỗi SQL.
+        Nguồn: `product_handler.go:125-137`.
+      x-upstream-path: /product/api/categories/{categoryId}
+      x-gateway-route: product-catalog
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-102, ISSUE-01, ISSUE-93]
+      security: []
+      responses:
+        "200":
+          description: Luôn `true` khi không lỗi.
+          content:
+            application/json:
+              schema: { type: boolean, const: true }
+        "400": { $ref: "#/components/responses/BadRequestId" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  # ======================= Products =======================
+  /api/products:
+    get:
+      operationId: listProducts
+      tags: [products]
+      summary: Danh sách tất cả sản phẩm (mảng thô, bỏ qua query)
+      description: |
+        `LEFT JOIN categories`, sắp `product_id DESC`. Mọi query param (`page`, `size`, `sort`, `categoryId`, `search`) **bị bỏ qua**;
+        BFF mong đợi Page (ISSUE-48). Không có field `description` (ISSUE-50). DB không kết nối → `[]`.
+        Nguồn: `product_handler.go:150-157`, `product_repo.go:222-240`.
+      x-upstream-path: /product/api/products
+      x-gateway-route: product-catalog
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-48, ISSUE-50, ISSUE-78]
+      security: []
+      responses:
+        "200":
+          description: Mảng sản phẩm.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ProductDto" }
+        "500": { $ref: "#/components/responses/InternalError" }
+    post:
+      operationId: createProduct
+      tags: [products]
+      summary: Tạo sản phẩm (public tại gateway)
+      description: |
+        Chỉ đọc `category.categoryId` (> 0) — `categoryId` phẳng của admin bị bỏ qua (ISSUE-60). `sku` không gửi → lưu `''`;
+        sản phẩm thứ hai không SKU vi phạm `UNIQUE(sku)` → 500 (ISSUE-55). Không validate giá/số lượng âm (ISSUE-35).
+        Trả **201** body + `productId`. DB không kết nối → 201 `productId: 1` (ISSUE-28).
+        Nguồn: `product_handler.go:177-189`, `product_repo.go:262-285`.
+      x-upstream-path: /product/api/products
+      x-gateway-route: product-catalog
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-102, ISSUE-01, ISSUE-55, ISSUE-60, ISSUE-35, ISSUE-27, ISSUE-93]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ProductDto" }
+      responses:
+        "201":
+          description: Echo body + `productId` mới.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProductDto" }
+        "400": { $ref: "#/components/responses/BadRequestBody" }
+        "500":
+          description: Lỗi DB (UNIQUE sku, FK category…).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorVm" }
+    put:
+      operationId: updateProductFromBody
+      tags: [products]
+      summary: Cập nhật sản phẩm theo `productId` trong body (public tại gateway)
+      description: 'Ghi đè toàn bộ 6 cột; không 404 khi không tồn tại. Nguồn: `product_handler.go:191-203`, `product_repo.go:287-310`.'
+      x-upstream-path: /product/api/products
+      x-gateway-route: product-catalog
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-102, ISSUE-01, ISSUE-55, ISSUE-60, ISSUE-35, ISSUE-93]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ProductDto" }
+      responses:
+        "200":
+          description: Echo body + `productId`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProductDto" }
+        "400": { $ref: "#/components/responses/BadRequestBody" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /api/products/{productId}:
+    parameters:
+      - name: productId
+        in: path
+        required: true
+        description: '`strconv.Atoi`; không phải số → 400 "Invalid productId".'
+        schema: { type: integer }
+    get:
+      operationId: getProductById
+      tags: [products]
+      summary: Chi tiết sản phẩm
+      description: 'DB không kết nối → 404. Nguồn: `product_handler.go:159-175`.'
+      x-upstream-path: /product/api/products/{productId}
+      x-gateway-route: product-catalog
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-50]
+      security: []
+      responses:
+        "200":
+          description: Sản phẩm.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProductDto" }
+        "400": { $ref: "#/components/responses/BadRequestId" }
+        "404":
+          description: '`detail` = "not found: product with id <id> not found".'
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorVm" }
+        "500": { $ref: "#/components/responses/InternalError" }
+    put:
+      operationId: updateProductById
+      tags: [products]
+      summary: Cập nhật sản phẩm theo path (public tại gateway)
+      description: 'Ghi đè toàn bộ cột; không 404. Nguồn: `product_handler.go:205-222`.'
+      x-upstream-path: /product/api/products/{productId}
+      x-gateway-route: product-catalog
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-102, ISSUE-01, ISSUE-55, ISSUE-60, ISSUE-35, ISSUE-93]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ProductDto" }
+      responses:
+        "200":
+          description: Echo body với `productId` = id trên path.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProductDto" }
+        "400":
+          description: '"Invalid productId" hoặc "Invalid request body".'
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorVm" }
+        "500": { $ref: "#/components/responses/InternalError" }
+    delete:
+      operationId: deleteProduct
+      tags: [products]
+      summary: Xóa sản phẩm (public tại gateway)
+      description: '200 `true` kể cả id không tồn tại. Nguồn: `product_handler.go:224-236`.'
+      x-upstream-path: /product/api/products/{productId}
+      x-gateway-route: product-catalog
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-102, ISSUE-01, ISSUE-93]
+      security: []
+      responses:
+        "200":
+          description: Luôn `true` khi không lỗi.
+          content:
+            application/json:
+              schema: { type: boolean, const: true }
+        "400": { $ref: "#/components/responses/BadRequestId" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  # ======================= Favourites =======================
+  /api/favourites:
+    servers:
+      - url: http://localhost:8086
+        description: Route gateway `favourite` trỏ upstream 7 không tồn tại (ISSUE-13) — chỉ gọi trực tiếp được.
+    get:
+      operationId: listFavourites
+      tags: [favourites]
+      summary: Tất cả favourite của MỌI user
+      description: 'Sắp `like_date DESC`, **không lọc theo user** (ISSUE-56). Nguồn: `favourite_handler.go:46-53`, `favourite_repo.go:61-83`.'
+      x-upstream-path: [/favourite/api/favourites, /product/api/favourites, /api/favourites]
+      x-gateway-route: favourite (hỏng — upstream_id 7 không tồn tại, ISSUE-13)
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-13, ISSUE-56, ISSUE-01]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Bọc trong `collection`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FavouriteCollectionResponse" }
+        "401": { $ref: "#/components/responses/GatewayUnauthorized" }
+        "500": { $ref: "#/components/responses/InternalError" }
+    post:
+      operationId: saveFavourite
+      tags: [favourites]
+      summary: Lưu favourite (upsert)
+      description: |
+        `ON CONFLICT (user_id, product_id, like_date) DO UPDATE SET updated_at`. `likeDate` rỗng/sai → `time.Now()` (mỗi lần tạo bản ghi mới — ISSUE-74).
+        `userId` lấy từ body, không từ token (ISSUE-56). Trả body (đã chuẩn hóa `likeDate` nếu thay bằng now).
+        Nguồn: `favourite_handler.go:103-116`, `favourite_repo.go:118-144`.
+      x-upstream-path: [/favourite/api/favourites, /product/api/favourites, /api/favourites]
+      x-gateway-route: favourite (hỏng — upstream_id 7 không tồn tại, ISSUE-13)
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-13, ISSUE-56, ISSUE-74, ISSUE-01]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/FavouriteDto" }
+      responses:
+        "200":
+          description: Favourite đã lưu.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FavouriteDto" }
+        "400": { $ref: "#/components/responses/BadRequestPayload" }
+        "401": { $ref: "#/components/responses/GatewayUnauthorized" }
+        "500": { $ref: "#/components/responses/InternalError" }
+    put:
+      operationId: updateFavourite
+      tags: [favourites]
+      summary: Giống hệt POST (gọi lại handler Save)
+      description: 'Nguồn: `favourite_handler.go:118-120`.'
+      x-upstream-path: [/favourite/api/favourites, /product/api/favourites, /api/favourites]
+      x-gateway-route: favourite (hỏng — upstream_id 7 không tồn tại, ISSUE-13)
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-13, ISSUE-56, ISSUE-74, ISSUE-01]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/FavouriteDto" }
+      responses:
+        "200":
+          description: Favourite đã lưu.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FavouriteDto" }
+        "400": { $ref: "#/components/responses/BadRequestPayload" }
+        "401": { $ref: "#/components/responses/GatewayUnauthorized" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /api/favourites/find:
+    servers:
+      - url: http://localhost:8086
+        description: Route gateway `favourite` hỏng (ISSUE-13).
+    get:
+      operationId: findFavouriteByBody
+      tags: [favourites]
+      summary: Tìm favourite theo khóa trong BODY của GET
+      description: |
+        GET có body JSON `FavouriteID` (ISSUE-35) — nhiều client/proxy bỏ body của GET.
+        `likeDate` không parse được → 500 "invalid likeDate: …" (ISSUE-74). DB không kết nối → 404.
+        Nguồn: `favourite_handler.go:55-72`.
+      x-upstream-path: [/favourite/api/favourites/find, /product/api/favourites/find, /api/favourites/find]
+      x-gateway-route: favourite (hỏng — upstream_id 7 không tồn tại, ISSUE-13)
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-13, ISSUE-35, ISSUE-74, ISSUE-01]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/FavouriteID" }
+      responses:
+        "200":
+          description: Favourite.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FavouriteDto" }
+        "400": { $ref: "#/components/responses/BadRequestPayload" }
+        "401": { $ref: "#/components/responses/GatewayUnauthorized" }
+        "404": { $ref: "#/components/responses/FavouriteNotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /api/favourites/{userId}/{productId}/{likeDate}:
+    servers:
+      - url: http://localhost:8086
+        description: Route gateway `favourite` hỏng (ISSUE-13).
+    parameters:
+      - name: userId
+        in: path
+        required: true
+        schema: { type: integer }
+      - name: productId
+        in: path
+        required: true
+        schema: { type: integer }
+      - name: likeDate
+        in: path
+        required: true
+        description: |
+          Chấp nhận `2006-01-02T15:04:05.000Z`, `2006-01-02T15:04:05Z`, `2006-01-02T15:04:05`, `2006-01-02 15:04:05`, `2006-01-02`, RFC3339
+          (`favourite_repo.go:43-57`). Sai định dạng → 500.
+        schema: { type: string, example: "2026-01-01T10:00:00" }
+    get:
+      operationId: getFavouriteById
+      tags: [favourites]
+      summary: Tìm favourite theo khóa trên path
+      description: 'Nguồn: `favourite_handler.go:74-101`.'
+      x-upstream-path:
+        - "/favourite/api/favourites/{userId}/{productId}/{likeDate}"
+        - "/product/api/favourites/{userId}/{productId}/{likeDate}"
+        - "/api/favourites/{userId}/{productId}/{likeDate}"
+      x-gateway-route: favourite (hỏng — upstream_id 7 không tồn tại, ISSUE-13)
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-13, ISSUE-56, ISSUE-74, ISSUE-01]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Favourite.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FavouriteDto" }
+        "400":
+          description: '"Invalid userId" hoặc "Invalid productId".'
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorVm" }
+        "401": { $ref: "#/components/responses/GatewayUnauthorized" }
+        "404": { $ref: "#/components/responses/FavouriteNotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+    delete:
+      operationId: deleteFavouriteById
+      tags: [favourites]
+      summary: Xóa favourite theo path
+      description: |
+        Luôn `true` khi không lỗi (`affected >= 0`, kể cả không có bản ghi); ai có token cũng xóa được favourite của người khác (ISSUE-56, ISSUE-74).
+        Nguồn: `favourite_handler.go:137-160`, `favourite_repo.go:146-172`.
+      x-upstream-path:
+        - "/favourite/api/favourites/{userId}/{productId}/{likeDate}"
+        - "/product/api/favourites/{userId}/{productId}/{likeDate}"
+        - "/api/favourites/{userId}/{productId}/{likeDate}"
+      x-gateway-route: favourite (hỏng — upstream_id 7 không tồn tại, ISSUE-13)
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-13, ISSUE-56, ISSUE-74, ISSUE-01]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Luôn `true` khi không lỗi.
+          content:
+            application/json:
+              schema: { type: boolean }
+        "400":
+          description: '"Invalid userId" hoặc "Invalid productId".'
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorVm" }
+        "401": { $ref: "#/components/responses/GatewayUnauthorized" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /api/favourites/delete:
+    servers:
+      - url: http://localhost:8086
+        description: Route gateway `favourite` hỏng (ISSUE-13).
+    delete:
+      operationId: deleteFavouriteByBody
+      tags: [favourites]
+      summary: Xóa favourite theo khóa trong BODY của DELETE
+      description: 'DELETE có body `FavouriteID` (ISSUE-35). Luôn `true` khi không lỗi. Nguồn: `favourite_handler.go:122-135`.'
+      x-upstream-path: [/favourite/api/favourites/delete, /product/api/favourites/delete, /api/favourites/delete]
+      x-gateway-route: favourite (hỏng — upstream_id 7 không tồn tại, ISSUE-13)
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-13, ISSUE-35, ISSUE-56, ISSUE-74, ISSUE-01]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/FavouriteID" }
+      responses:
+        "200":
+          description: Luôn `true` khi không lỗi.
+          content:
+            application/json:
+              schema: { type: boolean }
+        "400": { $ref: "#/components/responses/BadRequestPayload" }
+        "401": { $ref: "#/components/responses/GatewayUnauthorized" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Access token Keycloak (realm `ecommerce`), verify bởi APISIX `openid-connect` (`bearer_only`, JWKS, RS256).
+        Không kiểm role (ISSUE-01); service không tự verify (ISSUE-02).
+  responses:
+    GatewayUnauthorized:
+      description: APISIX `openid-connect` từ chối (thiếu/sai/hết hạn token). Body do APISIX sinh, không phải `ErrorVm`.
+    BadRequestBody:
+      description: '"Invalid request body" — body không phải JSON hợp lệ / sai kiểu.'
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorVm" }
+          example: { statusCode: "400", title: Bad request, detail: Invalid request body }
+    BadRequestPayload:
+      description: '"Invalid request payload" — body không phải JSON hợp lệ / sai kiểu.'
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorVm" }
+          example: { statusCode: "400", title: Bad request, detail: Invalid request payload }
+    BadRequestId:
+      description: 'Path id không phải số nguyên ("Invalid categoryId" / "Invalid productId").'
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorVm" }
+    FavouriteNotFound:
+      description: '"Favourite not found".'
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorVm" }
+          example: { statusCode: "404", title: Not found, detail: Favourite not found }
+    InternalError:
+      description: Lỗi DB/nội bộ; `detail` = thông điệp lỗi nguyên văn (ISSUE-93).
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorVm" }
+  schemas:
+    Health:
+      type: object
+      properties:
+        status: { type: string, const: UP }
+        components:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              status: { type: string, const: UP }
+      example: { status: UP, components: { db: { status: UP } } }
+    ErrorVm:
+      type: object
+      description: '`response.ErrorVm` (`services/shared/response/response.go:6-10`).'
+      required: [statusCode, title, detail]
+      properties:
+        statusCode: { type: string, enum: ["400", "404", "500"], description: Mã HTTP dạng chuỗi. }
+        title: { type: string, enum: [Bad request, Not found, Internal server error] }
+        detail: { type: string }
+    CategoryDto:
+      type: object
+      description: '`model.CategoryDto` (`internal/model/product.go:3-8`). Không có field nào bắt buộc ở server.'
+      properties:
+        categoryId: { type: integer, description: Bị bỏ qua khi tạo; trả về id thật. }
+        categoryTitle: { type: string }
+        imageUrl: { type: string, description: 'Rỗng khi NULL.' }
+        parentCategory:
+          $ref: "#/components/schemas/CategoryDto"
+          description: 'Request: chỉ đọc `parentCategory.categoryId` (> 0). Response: không bao giờ có khi đọc từ DB.'
+    ProductDto:
+      type: object
+      description: '`model.ProductDto` (`internal/model/product.go:10-18`).'
+      properties:
+        productId: { type: integer }
+        productTitle: { type: string }
+        imageUrl: { type: string }
+        sku: { type: string, description: 'Không gửi → `""` (UNIQUE — ISSUE-55).' }
+        priceUnit: { type: number, format: double, description: 'float64 / DECIMAL(12,2) (ISSUE-27).' }
+        quantity: { type: integer }
+        category:
+          $ref: "#/components/schemas/CategoryDto"
+          description: 'Response: có khi sản phẩm có danh mục (chỉ `categoryId`, `categoryTitle`, `imageUrl`). Request: chỉ đọc `category.categoryId`.'
+    FavouriteID:
+      type: object
+      description: '`model.FavouriteID` (`internal/model/favourite.go:3-7`).'
+      properties:
+        userId: { type: integer }
+        productId: { type: integer }
+        likeDate: { type: string, example: "2026-01-01T10:00:00" }
+    FavouriteDto:
+      type: object
+      description: '`model.FavouriteDto` (`internal/model/favourite.go:9-15`). Response luôn format `likeDate` = `2006-01-02T15:04:05` (mất múi giờ).'
+      properties:
+        userId: { type: integer }
+        productId: { type: integer }
+        likeDate: { type: string, example: "2026-01-01T10:00:00" }
+        user: { description: 'interface{} — echo nếu client gửi; không bao giờ điền từ DB.' }
+        product: { description: 'interface{} — echo nếu client gửi; không bao giờ điền từ DB.' }
+    FavouriteCollectionResponse:
+      type: object
+      properties:
+        collection:
+          type: array
+          items: { $ref: "#/components/schemas/FavouriteDto" }

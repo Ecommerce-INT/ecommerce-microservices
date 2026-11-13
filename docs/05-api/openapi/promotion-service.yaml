@@ -1,0 +1,866 @@
+openapi: 3.1.0
+info:
+  title: promotion-service API (promotion + tax)
+  version: "1.0.0"
+  description: |
+    Đặc tả OpenAPI **as-is** của `promotion-service` (Bun + Hono + Drizzle, port `8093`) — gồm khuyến mãi (promotions),
+    loại thuế (tax classes) và thuế suất (tax rates). Mô tả đúng hành vi code hiện tại, không phải thiết kế đích.
+
+    - Tài liệu service: [../../03-services/promotion-service.md](../../03-services/promotion-service.md)
+    - Định tuyến gateway: [../gateway-routing.md](../gateway-routing.md) · Danh mục API: [../api-catalog.md](../api-catalog.md)
+    - Danh mục lỗi: [../error-catalog.md](../error-catalog.md)
+
+    **Quy ước trong spec này**
+    - Path ghi theo **path tại gateway APISIX** (kiểu `/<svc>/...`, không rewrite). Service đăng ký route hai lần:
+      dưới prefix `/promotion` (promotion), `/tax` (tax) **và** ở gốc (`services/promotion-service/src/index.ts:255-265`),
+      nên path trong spec cũng gọi được trực tiếp port `8093`. `x-upstream-path` liệt kê các path service thực nhận.
+    - `x-gateway-route` = `id` route trong `deploy/apisix/apisix.yaml`; `none — not exposed` khi không route nào khớp.
+      Route `promotion-backoffice` chỉ có `uri: /promotion/backoffice/promotions/*` → **path gốc collection không khớp**
+      (list/create/update bị 404 tại gateway — ISSUE-15). Route `tax-classes`, `tax-rates` trỏ `upstream_id: 13`
+      **không tồn tại** (ISSUE-13) → mọi path `/tax/...` không dùng được qua gateway compose.
+    - `security`: `bearerAuth` khi route APISIX có `openid-connect` (`bearer_only`, JWKS, RS256); `[]` khi gọi
+      trực tiếp/không có route. APISIX **không kiểm role** (ISSUE-01) → `x-required-role: none (ISSUE-01)`.
+      Service không đọc token.
+    - Hai kiểu lỗi trong cùng service (ISSUE-29):
+      promotion → `{statusCode, message[, errors]}` có try/catch; tax → `{message}` **không** try/catch,
+      exception (JSON hỏng, vi phạm UNIQUE/FK) rơi vào handler mặc định của Hono → `500 text/plain "Internal Server Error"` (ISSUE-94).
+    - `pageNo`/`pageSize` chỉ `parseInt`, không giới hạn, không chặn số âm (ISSUE-111).
+    - Mọi request qua gateway chịu global rule `limit-count` 1200 req/60 s theo `remote_addr` → 429 (ISSUE-61).
+  x-source:
+    - services/promotion-service/src/index.ts
+    - services/promotion-service/src/types.ts
+    - services/promotion-service/src/tax-types.ts
+    - services/promotion-service/src/service.ts
+    - services/promotion-service/src/tax-service.ts
+    - services/promotion-service/src/schema.ts
+    - services/promotion-service/src/db.ts
+    - deploy/apisix/apisix.yaml
+servers:
+  - url: http://localhost:9080
+    description: APISIX gateway (docker compose local). Path trong spec là path tại gateway.
+  - url: http://localhost:8093
+    description: Gọi trực tiếp promotion-service (port publish ra host, không xác thực — ISSUE-02).
+tags:
+  - name: promotions
+    description: Khuyến mãi backoffice (route `promotion-backoffice`, chỉ khớp path có id — ISSUE-15).
+  - name: tax-classes
+    description: Loại thuế (route `tax-classes` hỏng — ISSUE-13).
+  - name: tax-rates
+    description: Thuế suất (route `tax-rates` hỏng — ISSUE-13).
+  - name: health
+    description: Health check tĩnh, không có route gateway.
+
+paths:
+  # ======================= Health =======================
+  /actuator/health:
+    servers:
+      - url: http://localhost:8093
+        description: Chỉ gọi trực tiếp — không có route gateway.
+    get:
+      operationId: promotionHealth
+      tags: [health]
+      summary: Health check (luôn UP)
+      description: |
+        Payload tĩnh, không kiểm DB (ISSUE-36). Alias: `/promotion/actuator/health`, `/tax/actuator/health`.
+        Nguồn: `services/promotion-service/src/index.ts:31-41`.
+      x-upstream-path: [/actuator/health, /promotion/actuator/health, /tax/actuator/health]
+      x-gateway-route: none — not exposed
+      x-required-role: none
+      x-known-issues: [ISSUE-36]
+      security: []
+      responses:
+        "200":
+          description: Luôn UP.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Health" }
+              example: { status: UP, components: { db: { status: UP } } }
+
+  # ======================= Promotions =======================
+  /promotion/backoffice/promotions:
+    servers:
+      - url: http://localhost:8093
+        description: Chỉ gọi trực tiếp — route gateway `/promotion/backoffice/promotions/*` không khớp path gốc (ISSUE-15).
+    get:
+      operationId: listPromotions
+      tags: [promotions]
+      summary: Danh sách khuyến mãi (phân trang + lọc)
+      description: |
+        Lọc `LIKE` không phân biệt hoa thường theo `name` và `coupon_code`; sắp `id DESC`.
+        `startDate`/`endDate` được đọc nhưng **bị bỏ qua** (ISSUE-30). Lỗi DB trong service bị nuốt → trả trang rỗng 200
+        (`src/service.ts:73-79`). Nguồn: `src/index.ts:47-68`, `src/service.ts:38-80`.
+      x-upstream-path: [/promotion/backoffice/promotions, /backoffice/promotions]
+      x-gateway-route: none — not exposed (route promotion-backoffice không khớp path gốc, ISSUE-15)
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-15, ISSUE-30, ISSUE-28, ISSUE-02, ISSUE-111]
+      security: []
+      parameters:
+        - { name: pageNo, in: query, schema: { type: integer, default: 0 }, description: "Trang (0-based). Không chặn số âm." }
+        - { name: pageSize, in: query, schema: { type: integer, default: 5 }, description: "Kích thước trang. Không giới hạn trên." }
+        - { name: promotionName, in: query, schema: { type: string, default: "" } }
+        - { name: couponCode, in: query, schema: { type: string, default: "" } }
+        - { name: startDate, in: query, schema: { type: string }, description: "Bị bỏ qua (ISSUE-30)." }
+        - { name: endDate, in: query, schema: { type: string }, description: "Bị bỏ qua (ISSUE-30)." }
+      responses:
+        "200":
+          description: Trang khuyến mãi (rỗng nếu DB lỗi).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PromotionListVm" }
+        "500": { $ref: "#/components/responses/PromotionInternalError" }
+    post:
+      operationId: createPromotion
+      tags: [promotions]
+      summary: Tạo khuyến mãi
+      description: |
+        Validate bằng Zod `PromotionPostVmSchema` (`src/types.ts:3-17`). `slug` rỗng → sinh từ `name` (`slugify`).
+        Không kiểm trùng coupon, thứ tự ngày, khoảng `discountPercentage` (ISSUE-30, ISSUE-62).
+        Nguồn: `src/index.ts:85-97`, `src/service.ts:88-110`.
+      x-upstream-path: [/promotion/backoffice/promotions, /backoffice/promotions]
+      x-gateway-route: none — not exposed (ISSUE-15)
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-15, ISSUE-30, ISSUE-62, ISSUE-93]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PromotionPostVm" }
+            example: { name: Black Friday, couponCode: BF2026, discountType: PERCENTAGE, discountPercentage: 20, startDate: "2026-11-27T00:00:00Z", endDate: "2026-11-30T23:59:59Z" }
+      responses:
+        "201":
+          description: Đã tạo.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PromotionDetailVm" }
+        "400": { $ref: "#/components/responses/PromotionValidationError" }
+        "500": { $ref: "#/components/responses/PromotionInternalError" }
+    put:
+      operationId: updatePromotion
+      tags: [promotions]
+      summary: Cập nhật khuyến mãi (id trong body)
+      description: |
+        Ghi đè toàn bộ field (default Zod áp dụng cho field thiếu). `id` không tồn tại → `UPDATE ... RETURNING` rỗng →
+        `mapRow(undefined)` ném TypeError → **500** thay vì 404 (ISSUE-65c). Nguồn: `src/index.ts:100-112`, `src/service.ts:112-136`.
+      x-upstream-path: [/promotion/backoffice/promotions, /backoffice/promotions]
+      x-gateway-route: none — not exposed (ISSUE-15)
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-15, ISSUE-65, ISSUE-62, ISSUE-93]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PromotionPutVm" }
+      responses:
+        "200":
+          description: Bản ghi sau cập nhật.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PromotionDetailVm" }
+        "400": { $ref: "#/components/responses/PromotionValidationError" }
+        "500": { $ref: "#/components/responses/PromotionInternalError" }
+
+  /promotion/backoffice/promotions/{promotionId}:
+    parameters:
+      - name: promotionId
+        in: path
+        required: true
+        schema: { type: integer }
+        description: "Đọc bằng `parseInt` (chấp nhận tiền tố số, vd `12abc` → 12)."
+    get:
+      operationId: getPromotion
+      tags: [promotions]
+      summary: Chi tiết khuyến mãi
+      description: "Nguồn: `src/index.ts:71-82`, `src/service.ts:82-86`."
+      x-upstream-path: ["/promotion/backoffice/promotions/{promotionId}", "/backoffice/promotions/{promotionId}"]
+      x-gateway-route: promotion-backoffice
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-01]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Khuyến mãi.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PromotionDetailVm" }
+        "400": { $ref: "#/components/responses/PromotionInvalidId" }
+        "401": { $ref: "#/components/responses/GatewayUnauthorized" }
+        "404":
+          description: Không có bản ghi.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BunStatusError" }
+              example: { statusCode: "404", message: Promotion not found }
+        "429": { $ref: "#/components/responses/GatewayRateLimited" }
+        "500": { $ref: "#/components/responses/PromotionInternalError" }
+    delete:
+      operationId: deletePromotion
+      tags: [promotions]
+      summary: Xóa khuyến mãi
+      description: |
+        Trả **200 body rỗng** kể cả khi id không tồn tại (ISSUE-65d). Nguồn: `src/index.ts:115-125`, `src/service.ts:138-140`.
+      x-upstream-path: ["/promotion/backoffice/promotions/{promotionId}", "/backoffice/promotions/{promotionId}"]
+      x-gateway-route: promotion-backoffice
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-01, ISSUE-65]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Body rỗng.
+        "400": { $ref: "#/components/responses/PromotionInvalidId" }
+        "401": { $ref: "#/components/responses/GatewayUnauthorized" }
+        "429": { $ref: "#/components/responses/GatewayRateLimited" }
+        "500": { $ref: "#/components/responses/PromotionInternalError" }
+
+  # ======================= Tax classes =======================
+  /tax/backoffice/tax-classes/paging:
+    get:
+      operationId: pageTaxClasses
+      tags: [tax-classes]
+      summary: Phân trang loại thuế
+      description: |
+        Sắp `id ASC`. Lỗi DB bị nuốt → trang rỗng `isLast: true`. `pageSize=0` → `totalPages` = `NaN`/`Infinity`
+        → JSON `null`. Nguồn: `src/index.ts:132-137`, `src/tax-service.ts:74-106`.
+      x-upstream-path: [/tax/backoffice/tax-classes/paging, /backoffice/tax-classes/paging]
+      x-gateway-route: tax-classes (hỏng — upstream_id 13 không tồn tại, ISSUE-13)
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-13, ISSUE-01, ISSUE-28, ISSUE-111]
+      security:
+        - bearerAuth: []
+      parameters:
+        - { name: pageNo, in: query, schema: { type: integer, default: 0 } }
+        - { name: pageSize, in: query, schema: { type: integer, default: 10 } }
+      responses:
+        "200":
+          description: Trang loại thuế.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TaxClassListVm" }
+        "401": { $ref: "#/components/responses/GatewayUnauthorized" }
+        "429": { $ref: "#/components/responses/GatewayRateLimited" }
+        "502": { $ref: "#/components/responses/GatewayUpstreamMissing" }
+
+  /tax/backoffice/tax-classes/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer } }
+    get:
+      operationId: getTaxClass
+      tags: [tax-classes]
+      summary: Chi tiết loại thuế
+      description: "Nguồn: `src/index.ts:139-145`."
+      x-upstream-path: ["/tax/backoffice/tax-classes/{id}", "/backoffice/tax-classes/{id}"]
+      x-gateway-route: tax-classes (hỏng — ISSUE-13)
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-13, ISSUE-94]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Loại thuế.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TaxClassVm" }
+        "400":
+          description: id không phải số.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MessageError" }
+              example: { message: Invalid tax class ID }
+        "401": { $ref: "#/components/responses/GatewayUnauthorized" }
+        "404":
+          description: Không tồn tại.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MessageError" }
+              example: { message: Tax class not found }
+        "429": { $ref: "#/components/responses/GatewayRateLimited" }
+        "500": { $ref: "#/components/responses/HonoInternalError" }
+        "502": { $ref: "#/components/responses/GatewayUpstreamMissing" }
+    put:
+      operationId: updateTaxClass
+      tags: [tax-classes]
+      summary: Đổi tên loại thuế
+      description: |
+        Trùng tên (cột `name` UNIQUE) → exception không bắt → 500 text/plain (không có 409).
+        Nguồn: `src/index.ts:161-170`, `src/tax-service.ts:60-67`.
+      x-upstream-path: ["/tax/backoffice/tax-classes/{id}", "/backoffice/tax-classes/{id}"]
+      x-gateway-route: tax-classes (hỏng — ISSUE-13)
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-13, ISSUE-94, ISSUE-110]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TaxClassPostVm" }
+      responses:
+        "204": { description: Đã cập nhật (body rỗng). }
+        "400":
+          description: '"Invalid tax class ID" hoặc "Invalid payload" (Zod lỗi — không trả chi tiết).'
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MessageError" }
+        "401": { $ref: "#/components/responses/GatewayUnauthorized" }
+        "404":
+          description: Không tồn tại.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MessageError" }
+              example: { message: Tax class not found }
+        "429": { $ref: "#/components/responses/GatewayRateLimited" }
+        "500": { $ref: "#/components/responses/HonoInternalError" }
+        "502": { $ref: "#/components/responses/GatewayUpstreamMissing" }
+    delete:
+      operationId: deleteTaxClass
+      tags: [tax-classes]
+      summary: Xóa loại thuế
+      description: |
+        Loại thuế đang được `tax_rate.tax_class_id` tham chiếu → vi phạm FK → 500 text/plain (không có 409).
+        Nguồn: `src/index.ts:172-178`, `src/tax-service.ts:69-72`.
+      x-upstream-path: ["/tax/backoffice/tax-classes/{id}", "/backoffice/tax-classes/{id}"]
+      x-gateway-route: tax-classes (hỏng — ISSUE-13)
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-13, ISSUE-94, ISSUE-110]
+      security:
+        - bearerAuth: []
+      responses:
+        "204": { description: Đã xóa (body rỗng). }
+        "400":
+          description: id không phải số.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MessageError" }
+              example: { message: Invalid tax class ID }
+        "401": { $ref: "#/components/responses/GatewayUnauthorized" }
+        "404":
+          description: Không tồn tại.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MessageError" }
+              example: { message: Tax class not found }
+        "429": { $ref: "#/components/responses/GatewayRateLimited" }
+        "500": { $ref: "#/components/responses/HonoInternalError" }
+        "502": { $ref: "#/components/responses/GatewayUpstreamMissing" }
+
+  /tax/backoffice/tax-classes:
+    servers:
+      - url: http://localhost:8093
+        description: Chỉ gọi trực tiếp — route `/tax/backoffice/tax-classes/*` không khớp path gốc (ISSUE-15) và upstream 13 không tồn tại (ISSUE-13).
+    get:
+      operationId: listTaxClasses
+      tags: [tax-classes]
+      summary: Tất cả loại thuế
+      description: "Sắp `id ASC`. Lỗi DB → 500 text/plain. Nguồn: `src/index.ts:147-150`, `src/tax-service.ts:44-47`."
+      x-upstream-path: [/tax/backoffice/tax-classes, /backoffice/tax-classes]
+      x-gateway-route: none — not exposed (ISSUE-15, ISSUE-13)
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-15, ISSUE-13, ISSUE-94]
+      security: []
+      responses:
+        "200":
+          description: Mảng loại thuế.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/TaxClassVm" }
+        "500": { $ref: "#/components/responses/HonoInternalError" }
+    post:
+      operationId: createTaxClass
+      tags: [tax-classes]
+      summary: Tạo loại thuế
+      description: |
+        Header `Location: /tax-classes/{id}` — path tương đối **không tồn tại** trong service (thiếu `/backoffice`, ISSUE-110).
+        Trùng tên → 500 text/plain. Nguồn: `src/index.ts:152-159`, `src/tax-service.ts:55-58`.
+      x-upstream-path: [/tax/backoffice/tax-classes, /backoffice/tax-classes]
+      x-gateway-route: none — not exposed (ISSUE-15, ISSUE-13)
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-15, ISSUE-13, ISSUE-94, ISSUE-110]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TaxClassPostVm" }
+            example: { name: VAT 10% }
+      responses:
+        "201":
+          description: Đã tạo.
+          headers:
+            Location:
+              schema: { type: string, example: /tax-classes/1 }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TaxClassVm" }
+        "400":
+          description: Zod lỗi.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MessageError" }
+              example: { message: Invalid payload }
+        "500": { $ref: "#/components/responses/HonoInternalError" }
+
+  # ======================= Tax rates =======================
+  /tax/backoffice/tax-rates/paging:
+    get:
+      operationId: pageTaxRates
+      tags: [tax-rates]
+      summary: Phân trang thuế suất (kèm tên loại thuế)
+      description: |
+        `LEFT JOIN tax_class`, sắp `id ASC`. **Không** try/catch (khác tax-classes) → lỗi DB 500 text/plain.
+        Nguồn: `src/index.ts:181-186`, `src/tax-service.ts:171-193`.
+      x-upstream-path: [/tax/backoffice/tax-rates/paging, /backoffice/tax-rates/paging]
+      x-gateway-route: tax-rates (hỏng — upstream_id 13 không tồn tại, ISSUE-13)
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-13, ISSUE-94, ISSUE-111]
+      security:
+        - bearerAuth: []
+      parameters:
+        - { name: pageNo, in: query, schema: { type: integer, default: 0 } }
+        - { name: pageSize, in: query, schema: { type: integer, default: 10 } }
+      responses:
+        "200":
+          description: Trang thuế suất.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TaxRateListVm" }
+        "401": { $ref: "#/components/responses/GatewayUnauthorized" }
+        "429": { $ref: "#/components/responses/GatewayRateLimited" }
+        "500": { $ref: "#/components/responses/HonoInternalError" }
+        "502": { $ref: "#/components/responses/GatewayUpstreamMissing" }
+
+  /tax/backoffice/tax-rates/tax-percent:
+    get:
+      operationId: getTaxPercent
+      tags: [tax-rates]
+      summary: Tra thuế suất theo loại thuế + quốc gia
+      description: |
+        Lấy bản ghi `id` lớn nhất khớp `tax_class_id` + `country_id`; không có → `0`. `stateOrProvinceId`, `zipCode`
+        được đọc nhưng **bị bỏ qua** (ISSUE-31). Nguồn: `src/index.ts:188-198`, `src/tax-service.ts:195-209`.
+      x-upstream-path: [/tax/backoffice/tax-rates/tax-percent, /backoffice/tax-rates/tax-percent]
+      x-gateway-route: tax-rates (hỏng — ISSUE-13)
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-13, ISSUE-31]
+      security:
+        - bearerAuth: []
+      parameters:
+        - { name: taxClassId, in: query, required: true, schema: { type: integer } }
+        - { name: countryId, in: query, required: true, schema: { type: integer } }
+        - { name: stateOrProvinceId, in: query, schema: { type: integer }, description: "Bị bỏ qua (ISSUE-31)." }
+        - { name: zipCode, in: query, schema: { type: string }, description: "Bị bỏ qua (ISSUE-31)." }
+      responses:
+        "200":
+          description: Thuế suất (số, vd `10` hoặc `0`).
+          content:
+            application/json:
+              schema: { type: number }
+              example: 10
+        "400":
+          description: Thiếu/sai `taxClassId` hoặc `countryId`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MessageError" }
+              example: { message: taxClassId and countryId are required }
+        "401": { $ref: "#/components/responses/GatewayUnauthorized" }
+        "429": { $ref: "#/components/responses/GatewayRateLimited" }
+        "500": { $ref: "#/components/responses/HonoInternalError" }
+        "502": { $ref: "#/components/responses/GatewayUpstreamMissing" }
+
+  /tax/backoffice/tax-rates/location-based-batch:
+    get:
+      operationId: getBatchTaxRates
+      tags: [tax-rates]
+      summary: Tra thuế suất cho nhiều loại thuế
+      description: |
+        `taxClassIds` dạng CSV; phần tử không phải số bị bỏ. Lọc `country_id` + `tax_class_id IN (...)`;
+        `stateOrProvinceId`, `zipCode` bị bỏ qua (ISSUE-31). Nguồn: `src/index.ts:200-211`, `src/tax-service.ts:211-231`.
+      x-upstream-path: [/tax/backoffice/tax-rates/location-based-batch, /backoffice/tax-rates/location-based-batch]
+      x-gateway-route: tax-rates (hỏng — ISSUE-13)
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-13, ISSUE-31]
+      security:
+        - bearerAuth: []
+      parameters:
+        - { name: taxClassIds, in: query, required: true, schema: { type: string, example: "1,2,3" } }
+        - { name: countryId, in: query, required: true, schema: { type: integer } }
+        - { name: stateOrProvinceId, in: query, schema: { type: integer }, description: "Bị bỏ qua (ISSUE-31)." }
+        - { name: zipCode, in: query, schema: { type: string }, description: "Bị bỏ qua (ISSUE-31)." }
+      responses:
+        "200":
+          description: Mảng thuế suất (rỗng nếu không id hợp lệ).
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/TaxRateVm" }
+        "400":
+          description: Thiếu `taxClassIds` hoặc `countryId` sai.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MessageError" }
+              example: { message: taxClassIds and countryId are required }
+        "401": { $ref: "#/components/responses/GatewayUnauthorized" }
+        "429": { $ref: "#/components/responses/GatewayRateLimited" }
+        "500": { $ref: "#/components/responses/HonoInternalError" }
+        "502": { $ref: "#/components/responses/GatewayUpstreamMissing" }
+
+  /tax/backoffice/tax-rates/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer } }
+    get:
+      operationId: getTaxRate
+      tags: [tax-rates]
+      summary: Chi tiết thuế suất
+      description: "Nguồn: `src/index.ts:213-219`, `src/tax-service.ts:119-128`."
+      x-upstream-path: ["/tax/backoffice/tax-rates/{id}", "/backoffice/tax-rates/{id}"]
+      x-gateway-route: tax-rates (hỏng — ISSUE-13)
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-13]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Thuế suất.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TaxRateVm" }
+        "400":
+          description: id không phải số.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MessageError" }
+              example: { message: Invalid tax rate ID }
+        "401": { $ref: "#/components/responses/GatewayUnauthorized" }
+        "404":
+          description: Không tồn tại.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MessageError" }
+              example: { message: Tax rate not found }
+        "429": { $ref: "#/components/responses/GatewayRateLimited" }
+        "500": { $ref: "#/components/responses/HonoInternalError" }
+        "502": { $ref: "#/components/responses/GatewayUpstreamMissing" }
+    put:
+      operationId: updateTaxRate
+      tags: [tax-rates]
+      summary: Cập nhật thuế suất
+      description: |
+        Ghi đè toàn bộ. `taxClassId` không tồn tại → vi phạm FK → 500 text/plain. `rate` có thể âm (ISSUE-62).
+        Nguồn: `src/index.ts:235-244`, `src/tax-service.ts:151-164`.
+      x-upstream-path: ["/tax/backoffice/tax-rates/{id}", "/backoffice/tax-rates/{id}"]
+      x-gateway-route: tax-rates (hỏng — ISSUE-13)
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-13, ISSUE-62, ISSUE-94, ISSUE-110]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TaxRatePostVm" }
+      responses:
+        "204": { description: Đã cập nhật (body rỗng). }
+        "400":
+          description: '"Invalid tax rate ID" hoặc "Invalid payload".'
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MessageError" }
+        "401": { $ref: "#/components/responses/GatewayUnauthorized" }
+        "404":
+          description: Không tồn tại.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MessageError" }
+              example: { message: Tax rate not found }
+        "429": { $ref: "#/components/responses/GatewayRateLimited" }
+        "500": { $ref: "#/components/responses/HonoInternalError" }
+        "502": { $ref: "#/components/responses/GatewayUpstreamMissing" }
+    delete:
+      operationId: deleteTaxRate
+      tags: [tax-rates]
+      summary: Xóa thuế suất
+      description: "Nguồn: `src/index.ts:246-252`, `src/tax-service.ts:166-169`."
+      x-upstream-path: ["/tax/backoffice/tax-rates/{id}", "/backoffice/tax-rates/{id}"]
+      x-gateway-route: tax-rates (hỏng — ISSUE-13)
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-13]
+      security:
+        - bearerAuth: []
+      responses:
+        "204": { description: Đã xóa (body rỗng). }
+        "400":
+          description: id không phải số.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MessageError" }
+              example: { message: Invalid tax rate ID }
+        "401": { $ref: "#/components/responses/GatewayUnauthorized" }
+        "404":
+          description: Không tồn tại.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MessageError" }
+              example: { message: Tax rate not found }
+        "429": { $ref: "#/components/responses/GatewayRateLimited" }
+        "500": { $ref: "#/components/responses/HonoInternalError" }
+        "502": { $ref: "#/components/responses/GatewayUpstreamMissing" }
+
+  /tax/backoffice/tax-rates:
+    servers:
+      - url: http://localhost:8093
+        description: Chỉ gọi trực tiếp — route `/tax/backoffice/tax-rates/*` không khớp path gốc (ISSUE-15) và upstream 13 không tồn tại (ISSUE-13).
+    get:
+      operationId: listTaxRates
+      tags: [tax-rates]
+      summary: Tất cả thuế suất
+      description: "Nguồn: `src/index.ts:221-224`, `src/tax-service.ts:110-117`."
+      x-upstream-path: [/tax/backoffice/tax-rates, /backoffice/tax-rates]
+      x-gateway-route: none — not exposed (ISSUE-15, ISSUE-13)
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-15, ISSUE-13]
+      security: []
+      responses:
+        "200":
+          description: Mảng thuế suất.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/TaxRateVm" }
+        "500": { $ref: "#/components/responses/HonoInternalError" }
+    post:
+      operationId: createTaxRate
+      tags: [tax-rates]
+      summary: Tạo thuế suất
+      description: |
+        Response **không có** `taxClassName`. Header `Location: /tax-rates/{id}` (path không tồn tại — ISSUE-110).
+        `taxClassId` không tồn tại → FK → 500 text/plain. Nguồn: `src/index.ts:226-233`, `src/tax-service.ts:130-149`.
+      x-upstream-path: [/tax/backoffice/tax-rates, /backoffice/tax-rates]
+      x-gateway-route: none — not exposed (ISSUE-15, ISSUE-13)
+      x-required-role: none (ISSUE-01)
+      x-known-issues: [ISSUE-15, ISSUE-13, ISSUE-62, ISSUE-94, ISSUE-110]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TaxRatePostVm" }
+            example: { rate: 10, countryId: 84, taxClassId: 1 }
+      responses:
+        "201":
+          description: Đã tạo.
+          headers:
+            Location:
+              schema: { type: string, example: /tax-rates/1 }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TaxRateVm" }
+        "400":
+          description: Zod lỗi.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MessageError" }
+              example: { message: Invalid payload }
+        "500": { $ref: "#/components/responses/HonoInternalError" }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Access token Keycloak (realm `ecommerce`), verify bởi APISIX `openid-connect` (`bearer_only`, JWKS, RS256).
+        Không kiểm role (ISSUE-01); promotion-service không đọc token.
+  responses:
+    GatewayUnauthorized:
+      description: |
+        APISIX `openid-connect` từ chối (thiếu/sai/hết hạn token). Header `WWW-Authenticate: Bearer realm="ecommerce"`;
+        body do APISIX/OpenResty sinh, không phải định dạng của service.
+    GatewayRateLimited:
+      description: 'APISIX `limit-count` (1200 req/60 s theo `remote_addr`, `rejected_code: 429`) — body mặc định APISIX (ISSUE-61).'
+    GatewayUpstreamMissing:
+      description: |
+        Route khớp nhưng `upstream_id: 13` không được định nghĩa (ISSUE-13) → APISIX trả lỗi 5xx
+        (theo mã nguồn APISIX là 502 — chưa kiểm chứng runtime).
+    PromotionInvalidId:
+      description: '`promotionId` không phải số.'
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/BunStatusError" }
+          example: { statusCode: "400", message: Invalid ID }
+    PromotionValidationError:
+      description: Body không qua Zod `PromotionPostVmSchema` / `PromotionPutVmSchema`; `errors` là mảng issue Zod v4.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/BunValidationError" }
+          example:
+            statusCode: "400"
+            message: Validation error
+            errors:
+              - { expected: string, code: invalid_type, path: [name], message: "Invalid input: expected string, received undefined" }
+    PromotionInternalError:
+      description: |
+        Exception trong handler promotion (body không phải JSON, lỗi DB, ngày không hợp lệ, id không tồn tại khi PUT…);
+        `message` = `err.message` nguyên văn (ISSUE-93).
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/BunStatusError" }
+          example: { statusCode: "500", message: "JSON Parse error: Unexpected identifier \"abc\"" }
+    HonoInternalError:
+      description: |
+        Exception không bắt trong route tax → handler lỗi mặc định của Hono (`app.onError` không cấu hình) (ISSUE-94).
+      content:
+        text/plain:
+          schema: { type: string, const: Internal Server Error }
+  schemas:
+    Health:
+      type: object
+      properties:
+        status: { type: string, const: UP }
+        components:
+          type: object
+          properties:
+            db:
+              type: object
+              properties:
+                status: { type: string, const: UP }
+    BunStatusError:
+      type: object
+      description: Định dạng lỗi route promotion (`src/index.ts:66,74,77`). `statusCode` là **chuỗi**.
+      required: [statusCode, message]
+      properties:
+        statusCode: { type: string, examples: ["400", "404", "500"] }
+        message: { type: string }
+    BunValidationError:
+      allOf:
+        - $ref: "#/components/schemas/BunStatusError"
+        - type: object
+          properties:
+            errors:
+              type: array
+              description: Mảng `ZodIssue` (Zod v4) — `code`, `path`, `message`, và các field tùy loại issue.
+              items:
+                type: object
+                properties:
+                  code: { type: string }
+                  path: { type: array, items: { type: [string, integer] } }
+                  message: { type: string }
+                additionalProperties: true
+    MessageError:
+      type: object
+      description: Định dạng lỗi route tax (`src/index.ts:141-251`).
+      required: [message]
+      properties:
+        message: { type: string }
+    PromotionPostVm:
+      type: object
+      description: Zod `PromotionPostVmSchema` (`src/types.ts:3-17`). Field enum là chuỗi tự do (ISSUE-30).
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1 }
+        slug: { type: string, description: "Rỗng → sinh từ `name`." }
+        description: { type: string, default: "" }
+        couponCode: { type: string, default: "" }
+        usageLimit: { type: integer, default: 100 }
+        discountType: { type: string, default: PERCENTAGE }
+        applyTo: { type: string, default: ALL }
+        usageType: { type: string, default: UNLIMITED }
+        discountPercentage: { type: integer, default: 0, description: "Không giới hạn 0–100 (ISSUE-62)." }
+        discountAmount: { type: integer, default: 0, description: "Có thể âm (ISSUE-62)." }
+        isActive: { type: boolean, default: true }
+        startDate: { type: string, description: "Chuỗi bất kỳ được `new Date()` parse; không validate định dạng." }
+        endDate: { type: string }
+    PromotionPutVm:
+      allOf:
+        - $ref: "#/components/schemas/PromotionPostVm"
+        - type: object
+          required: [id]
+          properties:
+            id: { type: integer }
+    PromotionDetailVm:
+      type: object
+      description: "`mapRow` (`src/service.ts:6-28`). `brands`/`categories`/`products` luôn `[]`."
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        slug: { type: string }
+        description: { type: string }
+        couponCode: { type: string }
+        usageLimit: { type: integer }
+        usageCount: { type: integer, description: "Không bao giờ tăng (ISSUE-30)." }
+        discountType: { type: string }
+        applyTo: { type: string }
+        usageType: { type: string }
+        discountPercentage: { type: integer }
+        discountAmount: { type: integer }
+        isActive: { type: boolean }
+        startDate: { type: [string, "null"], format: date-time }
+        endDate: { type: [string, "null"], format: date-time }
+        brands: { type: array, items: {}, maxItems: 0 }
+        categories: { type: array, items: {}, maxItems: 0 }
+        products: { type: array, items: {}, maxItems: 0 }
+    PromotionListVm:
+      type: object
+      properties:
+        promotionDetailVmList:
+          type: array
+          items: { $ref: "#/components/schemas/PromotionDetailVm" }
+        totalElements: { type: integer }
+        totalPages: { type: integer }
+    TaxClassPostVm:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1, description: "UNIQUE trong DB; trùng → 500." }
+    TaxClassVm:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }
+    TaxClassListVm:
+      type: object
+      properties:
+        taxClasses:
+          type: array
+          items: { $ref: "#/components/schemas/TaxClassVm" }
+        pageNo: { type: integer }
+        pageSize: { type: integer }
+        totalElements: { type: integer }
+        totalPages: { type: [integer, "null"], description: "`null` khi `pageSize=0` (NaN/Infinity)." }
+        isLast: { type: boolean }
+    TaxRatePostVm:
+      type: object
+      description: Zod `TaxRatePostVmSchema` (`src/tax-types.ts:23-29`).
+      required: [rate, countryId, taxClassId]
+      properties:
+        rate: { type: number, description: "Lưu `NUMERIC(10,4)`; không chặn âm (ISSUE-62)." }
+        countryId: { type: integer }
+        stateOrProvinceId: { type: [integer, "null"] }
+        zipCode: { type: [string, "null"] }
+        taxClassId: { type: integer, description: "FK `tax_class.id`; không tồn tại → 500." }
+    TaxRateVm:
+      type: object
+      properties:
+        id: { type: integer }
+        rate: { type: number }
+        countryId: { type: integer }
+        stateOrProvinceId: { type: [integer, "null"] }
+        zipCode: { type: [string, "null"] }
+        taxClassId: { type: integer, description: "`0` nếu cột NULL." }
+        taxClassName: { type: [string, "null"], description: "Không có trong response POST." }
+    TaxRateListVm:
+      type: object
+      properties:
+        taxRates:
+          type: array
+          items: { $ref: "#/components/schemas/TaxRateVm" }
+        pageNo: { type: integer }
+        pageSize: { type: integer }
+        totalElements: { type: integer }
+        totalPages: { type: [integer, "null"] }
+        isLast: { type: boolean }
