@@ -2,7 +2,7 @@
 
 > **Phiên bản:** 1.0 · **Trạng thái:** Final · **Cập nhật:** 2026-11-12 · **Phạm vi:** Ứng dụng (as-is)
 
-> Điểm vào của thư mục `02-architecture/`. Ánh xạ toàn bộ tài liệu kiến trúc vào **12 mục của arc42** và **4 mức của mô hình C4**. Mọi tài liệu mô tả **code hiện tại** (as-is); kiến trúc đích tương lai được lưu trữ riêng tại [`target-revamp/`](target-revamp/README.md). Tài liệu hạ tầng (k8s, CI/CD, observability stack) sẽ được bổ sung ở bộ riêng.
+> Điểm vào của thư mục `02-architecture/`. Ánh xạ toàn bộ tài liệu kiến trúc vào **12 mục của arc42** và **4 mức của mô hình C4**. Mọi tài liệu mô tả **code hiện tại** (as-is). Tài liệu hạ tầng (k8s, CI/CD, observability stack) sẽ được bổ sung ở bộ riêng.
 
 ## 1. Cấu trúc thư mục
 
@@ -26,8 +26,7 @@
 │   ├── frontend-architecture.md
 │   ├── api-conventions.md
 │   └── cross-cutting-concerns.md
-├── adr/                          ADR-001 … ADR-008
-└── target-revamp/                Đề xuất kiến trúc đích dài hạn (Better-Auth, NATS JetStream, PG18)
+└── adr/                          ADR-001 … ADR-008
 ```
 
 ## 2. Ánh xạ arc42

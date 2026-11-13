@@ -2,7 +2,7 @@
 
 > **Phiên bản:** 1.0 · **Trạng thái:** Final · **Cập nhật:** 2026-11-12 · **Phạm vi:** Ứng dụng (as-is)
 
-> ADR trong thư mục này ghi lại các **quyết định kiến trúc đang hiện diện trong code** (được suy ra ngược từ source — không tìm thấy ADR gốc trong repo). Chúng **không** phải đề xuất tương lai; kiến trúc đích trong `docs/ARCHITECTURE.md` / `docs/architecture-revamp-plan.md` không được phản ánh ở đây.
+> ADR trong thư mục này ghi lại các **quyết định kiến trúc đang hiện diện trong code** (được suy ra ngược từ source — không tìm thấy ADR gốc trong repo). Chúng **không** phải đề xuất tương lai; kiến trúc đích hay các đề xuất chưa triển khai không được phản ánh ở đây.
 
 ## Định dạng
 
